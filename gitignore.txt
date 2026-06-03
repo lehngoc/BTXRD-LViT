@@ -221,14 +221,14 @@ __marimo__/
 # BTXRD-LViT project files
 # ============================================================
 
-# Raw dataset - do not push medical images/annotations/csv to GitHub
-data/raw/images/*
-!data/raw/images/.gitkeep
-
-data/raw/Annotations/*
-!data/raw/Annotations/.gitkeep
-
+# Raw dataset - ignore everything inside raw dataset folders
+data/raw/images/**
+data/raw/Annotations/**
 data/raw/*.csv
+
+# Keep folder placeholders
+!data/raw/images/.gitkeep
+!data/raw/Annotations/.gitkeep
 
 # Processed dataset outputs
 data/processed/**
