@@ -216,3 +216,46 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ============================================================
+# BTXRD-LViT project files
+# ============================================================
+
+# Raw dataset - do not push medical images/annotations/csv to GitHub
+data/raw/images/*
+!data/raw/images/.gitkeep
+
+data/raw/Annotations/*
+!data/raw/Annotations/.gitkeep
+
+data/raw/*.csv
+
+# Processed dataset outputs
+data/processed/**
+!data/processed/
+!data/processed/**/
+!data/processed/**/.gitkeep
+
+# Exported datasets
+data/exports/**
+!data/exports/
+!data/exports/.gitkeep
+
+# Experiment outputs
+experiments/**
+!experiments/
+!experiments/.gitkeep
+
+# Model checkpoints
+*.pth
+*.pt
+*.ckpt
+*.pth.tar
+
+# Training logs
+logs/
+runs/
+wandb/
+
+# External reference repositories
+external/LViT/
