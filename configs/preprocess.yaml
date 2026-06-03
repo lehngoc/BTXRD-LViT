@@ -1,0 +1,35 @@
+project:
+  name: BTXRD-LiteLViT
+  seed: 42
+
+paths:
+  raw_image_dir: data/raw/images
+  raw_annotation_dir: data/raw/Annotations
+  raw_csv_path: data/raw/dataset.csv
+
+  mask_dir: data/processed/masks
+  clean_image_dir: data/processed/images_clean
+  clean_mask_dir: data/processed/masks_clean
+
+  text_csv_path: data/processed/text_annotations.csv
+  clean_metadata_csv_path: data/processed/metadata_clean.csv
+
+preprocessing:
+  crop_border: true
+  crop_margin_ratio: 0.03
+  min_foreground_area_ratio: 0.05
+  fallback_to_original: true
+
+text:
+  use_age: true
+  use_gender: true
+  use_view: true
+  use_anatomy: true
+  use_tumor_type: true
+  include_negative_prompt: true
+
+split:
+  train_ratio: 0.7
+  val_ratio: 0.15
+  test_ratio: 0.15
+  stratify_by: tumor
