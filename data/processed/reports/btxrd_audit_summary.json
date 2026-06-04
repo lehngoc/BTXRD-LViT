@@ -1,0 +1,21 @@
+{
+  "csv_rows": 3746,
+  "image_files": 3746,
+  "annotation_json_files": 1867,
+  "normal_count": 1879,
+  "tumor_count": 1867,
+  "benign_count": 1525,
+  "malignant_count": 342,
+  "min_width": 153,
+  "max_width": 3594,
+  "mean_width": 1629.4081687132941,
+  "min_height": 311,
+  "max_height": 4881,
+  "mean_height": 2128.5667378537105,
+  "missing_images_count": 0,
+  "missing_annotations_for_tumor_count": 0,
+  "annotations_for_normal_count": 0,
+  "missing_images_examples": [],
+  "missing_annotations_for_tumor_examples": [],
+  "annotations_for_normal_examples": []
+}
