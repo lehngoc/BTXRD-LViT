@@ -235,10 +235,6 @@ data/processed/**
 !data/processed/
 !data/processed/**/
 !data/processed/**/.gitkeep
-!data/processed/reports/
-!data/processed/reports/*.csv
-!data/processed/reports/*.json
-!data/processed/reports/*.txt
 
 # Exported datasets
 data/exports/**
