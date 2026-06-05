@@ -1,5 +1,5 @@
 experiment:
-  name: E1_unet_preprocessed_224_full_labels
+  name: E1_unet_preprocessed_224_weighted_loss
 
 data:
   root_dir: .
@@ -24,10 +24,12 @@ training:
   weight_decay: 0.0001
   bce_weight: 1.0
   dice_weight: 1.0
+  positive_weight: 20.0
+  dice_on_tumor_only: true
   early_stopping_patience: 100
   label_fraction: 1.0
   text_column: text_lvit_prompt
-  output_dir: experiments/E1_unet_preprocessed_224_full_labels
+  output_dir: experiments/E1_unet_preprocessed_224_weighted_loss
 
 metrics:
   threshold: 0.5

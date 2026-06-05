@@ -76,7 +76,7 @@ def run_epoch(
 
         with torch.set_grad_enabled(train):
             logits = model(images)
-            loss = criterion(logits, masks)
+            loss = criterion(logits, masks, tumor=tumor)
 
             if train:
                 optimizer.zero_grad(set_to_none=True)
@@ -128,6 +128,8 @@ def main() -> None:
     criterion = BCEDiceLoss(
         bce_weight=train_cfg.get("bce_weight", 1.0),
         dice_weight=train_cfg.get("dice_weight", 1.0),
+        positive_weight=train_cfg.get("positive_weight"),
+        dice_on_tumor_only=train_cfg.get("dice_on_tumor_only", False),
     )
     optimizer = torch.optim.AdamW(
         model.parameters(),

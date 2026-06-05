@@ -101,7 +101,7 @@ Evaluate the best checkpoint on the test split:
 ```bash
 python src/training/evaluate_unet.py \
   --config configs/train_unet_baseline.yaml \
-  --checkpoint experiments/E1_unet_preprocessed_224_full_labels/best.pt \
+  --checkpoint experiments/E1_unet_preprocessed_224_weighted_loss/best.pt \
   --split test
 ```
 
@@ -116,7 +116,7 @@ data/exports/btxrd_preprocessed/test.csv
 Training outputs are written to:
 
 ```text
-experiments/E1_unet_preprocessed_224_full_labels/
+experiments/E1_unet_preprocessed_224_weighted_loss/
   config.json
   history.csv
   best.pt
@@ -126,6 +126,8 @@ experiments/E1_unet_preprocessed_224_full_labels/
 ```
 
 Metrics are reported separately for all cases, tumor cases, and normal cases. Normal-case metrics include predicted mask area ratio and false-positive image rate.
+
+The current E1 config uses `positive_weight: 20.0` for BCE and computes DiceLoss on tumor samples only. This keeps normal cases in training for false-positive control while preventing empty-mask normal cases from dominating the Dice objective.
 
 For normal cases, use `normal_pred_area_ratio` and `normal_fp_image_rate` as the main false-positive metrics. `normal_precision` and `normal_recall` are logged for completeness, but they are not very interpretable when the ground-truth mask is empty.
 
@@ -152,8 +154,8 @@ Kaggle setup:
 Kaggle outputs are written to:
 
 ```text
-/kaggle/working/experiments/E1_unet_preprocessed_224_full_labels/
-/kaggle/working/E1_unet_preprocessed_224_full_labels_artifacts.zip
+/kaggle/working/experiments/E1_unet_preprocessed_224_weighted_loss/
+/kaggle/working/E1_unet_preprocessed_224_weighted_loss_artifacts.zip
 ```
 
 ## Git Tracking Notes
