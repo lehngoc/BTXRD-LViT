@@ -318,21 +318,15 @@ def build_tumor_disease_sentence(
         tumor_category_text = "a bone tumor"
 
     if tumor_subtype_text == "unknown tumor subtype":
-        return (
-            f"The image contains {tumor_category_text}; "
-            f"segment the tumor region only."
-        )
+        return f"The image contains {tumor_category_text}."
 
     if tumor_subtype_text.startswith("other "):
         return (
             f"The image contains {tumor_category_text} classified as "
-            f"{tumor_subtype_text}; segment the tumor region only."
+            f"{tumor_subtype_text}."
         )
 
-    return (
-        f"The image contains {tumor_subtype_text}, {tumor_category_text}; "
-        f"segment the tumor region only."
-    )
+    return f"The image contains {tumor_subtype_text}, {tumor_category_text}."
 
 
 def build_texts(row: pd.Series) -> dict:
@@ -376,11 +370,12 @@ def build_texts(row: pd.Series) -> dict:
             f"{diagnosis_text}."
         )
 
+        # Text input for LViT training.
+        # Keep it as metadata-style description, without patient age/gender
+        # and without explicit segmentation instructions.
         text_lvit_prompt = (
             f"{anatomy_sentence} "
-            f"{patient_text} "
-            f"{disease_sentence} "
-            f"Ignore irrelevant borders, text markers, and background artifacts."
+            f"{disease_sentence}"
         )
 
         segmentation_target_text = "segment tumor region only"
@@ -397,11 +392,12 @@ def build_texts(row: pd.Series) -> dict:
             f"No bone tumor."
         )
 
+        # Text input for LViT training.
+        # Keep negative information, but remove patient age/gender
+        # and avoid direct segmentation instruction wording.
         text_lvit_prompt = (
             f"{anatomy_sentence} "
-            f"{patient_text} "
-            f"{disease_sentence} "
-            f"Do not segment normal anatomical structures."
+            f"{disease_sentence}"
         )
 
         segmentation_target_text = "empty mask"
