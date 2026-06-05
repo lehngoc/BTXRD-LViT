@@ -74,6 +74,88 @@ data/processed/visual_checks/
 data/exports/btxrd_preprocessed/
 ```
 
+## E1 UNet Baseline Pipeline
+
+The first model pipeline is a clean image-only UNet baseline on preprocessed BTXRD resized to `224x224`.
+
+Smoke test the dataset, mask loading, UNet forward pass, and backward pass:
+
+```bash
+python src/training/smoke_test_model_pipeline.py --config configs/train_unet_baseline.yaml
+```
+
+Train the baseline:
+
+```bash
+python src/training/train_unet.py --config configs/train_unet_baseline.yaml
+```
+
+Or on Windows:
+
+```bat
+scripts\02_train_unet_baseline.bat
+```
+
+Evaluate the best checkpoint on the test split:
+
+```bash
+python src/training/evaluate_unet.py \
+  --config configs/train_unet_baseline.yaml \
+  --checkpoint experiments/E1_unet_preprocessed_224_full_labels/best.pt \
+  --split test
+```
+
+The UNet pipeline reads:
+
+```text
+data/exports/btxrd_preprocessed/train.csv
+data/exports/btxrd_preprocessed/val.csv
+data/exports/btxrd_preprocessed/test.csv
+```
+
+Training outputs are written to:
+
+```text
+experiments/E1_unet_preprocessed_224_full_labels/
+  config.json
+  history.csv
+  best.pt
+  last.pt
+  best_summary.json
+  test_metrics.json
+```
+
+Metrics are reported separately for all cases, tumor cases, and normal cases. Normal-case metrics include predicted mask area ratio and false-positive image rate.
+
+For normal cases, use `normal_pred_area_ratio` and `normal_fp_image_rate` as the main false-positive metrics. `normal_precision` and `normal_recall` are logged for completeness, but they are not very interpretable when the ground-truth mask is empty.
+
+The dataset reader normalizes Windows-style paths from exported CSV files, so manifests containing paths such as `data\processed\images_preprocessed\IMG000001.jpg` can also run on Linux/Kaggle. Set `data.root_dir` in the config when the dataset root is not the repository root.
+
+For 50% label experiments, note that the current `label_fraction < 1` behavior keeps all normal cases and samples tumor cases only. Treat this as a tumor-labeled fraction setup, not as a 50% sample of the entire train split.
+
+### Kaggle GPU T4 Notebook
+
+Use this notebook for the full E1 run on Kaggle instead of training on local CPU:
+
+```text
+notebooks/E1_unet_preprocessed_224_kaggle.ipynb
+```
+
+Kaggle setup:
+
+1. Enable GPU T4 in Notebook Settings.
+2. Attach a Kaggle Dataset containing `data/exports/btxrd_preprocessed/`, `data/processed/images_preprocessed/`, and `data/processed/masks_preprocessed/`.
+3. Make the repo available under `/kaggle/working/BTXRD-LViT`, or edit `REPO_ROOT` in the notebook.
+4. If auto-detection cannot find the attached data, edit `DATA_ROOT` in the notebook.
+5. Run the notebook cells in order: smoke test, train, evaluate `val` and `test`, then zip artifacts.
+
+Kaggle outputs are written to:
+
+```text
+/kaggle/working/experiments/E1_unet_preprocessed_224_full_labels/
+/kaggle/working/E1_unet_preprocessed_224_full_labels_artifacts.zip
+```
+
 ## Git Tracking Notes
 
 Version these files because they define reproducible preprocessing behavior:
@@ -121,6 +203,7 @@ Note: `data/raw/dataset.csv` is currently tracked in Git even though `.gitignore
 ```text
 configs/
   preprocess.yaml
+  train_unet_baseline.yaml
   splits/
     btxrd_split_seed42.csv
 data/
@@ -141,12 +224,22 @@ data/
     dataset.csv                # tracked metadata CSV
 docs/
   dataset_pipeline.md
+notebooks/
+  E1_unet_preprocessed_224_kaggle.ipynb
 scripts/
   01_prepare_btxrd.bat
   01_prepare_btxrd.sh
+  02_train_unet_baseline.bat
+  02_train_unet_baseline.sh
+  03_evaluate_unet_baseline.bat
+  03_evaluate_unet_baseline.sh
 src/
   export/
     export_training_dataset.py
+  data/
+    btxrd_dataset.py
+  models/
+    unet.py
   preprocessing/
     audit_btxrd_dataset.py
     convert_labelme_to_mask.py
@@ -158,6 +251,13 @@ src/
     validate_preprocessed_data.py
     visualize_masks.py
     visualize_preprocessed_data.py
+  training/
+    evaluate_unet.py
+    losses.py
+    metrics.py
+    smoke_test_model_pipeline.py
+    train_unet.py
+    utils.py
 .gitignore
 README.md
 requirements.txt

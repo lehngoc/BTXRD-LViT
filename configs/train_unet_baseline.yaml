@@ -1,0 +1,34 @@
+experiment:
+  name: E1_unet_preprocessed_224_full_labels
+
+data:
+  root_dir: .
+  train_csv: data/exports/btxrd_preprocessed/train.csv
+  val_csv: data/exports/btxrd_preprocessed/val.csv
+  test_csv: data/exports/btxrd_preprocessed/test.csv
+
+model:
+  name: unet
+  in_channels: 3
+  out_channels: 1
+  base_channels: 32
+
+training:
+  seed: 42
+  device: auto
+  image_size: 224
+  batch_size: 4
+  num_workers: 0
+  epochs: 200
+  learning_rate: 0.0003
+  weight_decay: 0.0001
+  bce_weight: 1.0
+  dice_weight: 1.0
+  early_stopping_patience: 100
+  label_fraction: 1.0
+  text_column: text_lvit_prompt
+  output_dir: experiments/E1_unet_preprocessed_224_full_labels
+
+metrics:
+  threshold: 0.5
+  min_fp_area_ratio: 0.001
