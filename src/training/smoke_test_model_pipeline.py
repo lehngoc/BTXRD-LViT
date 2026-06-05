@@ -23,12 +23,13 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def check_dataset(csv_path: str, root_dir: str, image_size: int, samples: int) -> None:
+def check_dataset(csv_path: str, root_dir: str, image_size: int, samples: int, tumor_only: bool) -> None:
     dataset = BTXRDSegmentationDataset(
         csv_path=csv_path,
         root_dir=root_dir,
         image_size=image_size,
         max_samples=samples,
+        tumor_only=tumor_only,
     )
     assert len(dataset) > 0, f"Empty dataset: {csv_path}"
 
@@ -40,13 +41,17 @@ def check_dataset(csv_path: str, root_dir: str, image_size: int, samples: int) -
         unique_mask_values = set(torch.unique(sample["mask"]).tolist())
         assert unique_mask_values.issubset({0.0, 1.0}), unique_mask_values
 
+        if tumor_only:
+            assert int(sample["tumor"].item()) == 1
 
-def check_forward_backward(train_csv: str, root_dir: str, image_size: int, batch_size: int) -> None:
+
+def check_forward_backward(train_csv: str, root_dir: str, image_size: int, batch_size: int, tumor_only: bool) -> None:
     dataset = BTXRDSegmentationDataset(
         csv_path=train_csv,
         root_dir=root_dir,
         image_size=image_size,
         max_samples=max(batch_size, 2),
+        tumor_only=tumor_only,
     )
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
     batch = next(iter(loader))
@@ -66,15 +71,17 @@ def main() -> None:
     cfg = load_config(args.config)
     image_size = int(cfg["training"]["image_size"])
     root_dir = cfg["data"].get("root_dir", ".")
+    tumor_only = cfg["data"].get("tumor_only", cfg["training"].get("tumor_only", False))
 
     for split in ["train", "val", "test"]:
-        check_dataset(cfg["data"][f"{split}_csv"], root_dir, image_size, args.samples_per_split)
+        check_dataset(cfg["data"][f"{split}_csv"], root_dir, image_size, args.samples_per_split, tumor_only)
 
     check_forward_backward(
         cfg["data"]["train_csv"],
         root_dir,
         image_size,
         batch_size=min(2, cfg["training"]["batch_size"]),
+        tumor_only=tumor_only,
     )
 
     print("BTXRD model pipeline smoke test passed.")
