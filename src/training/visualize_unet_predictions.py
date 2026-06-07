@@ -115,7 +115,7 @@ def main() -> None:
         include_text=True,
         text_column=train_cfg.get("text_column", "text_lvit_prompt"),
         max_samples=args.max_samples,
-        tumor_only=False,
+        tumor_only=data_cfg.get("tumor_only", False),
         root_dir=data_cfg.get("root_dir", "."),
     )
     loader = DataLoader(
