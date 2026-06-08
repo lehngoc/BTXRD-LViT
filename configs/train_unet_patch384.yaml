@@ -6,6 +6,8 @@ data:
   train_csv: data/exports/patches_jitter/patches_384/metadata.csv
   val_csv: data/exports/patches_jitter_val/patches_384/metadata.csv
   test_csv: data/exports/patches_jitter_test/patches_384/metadata.csv
+  val_full_csv: data/exports/btxrd_preprocessed/val.csv
+  test_full_csv: data/exports/btxrd_preprocessed/test.csv
 
 model:
   name: unet
@@ -19,17 +21,24 @@ training:
   image_size: 384
   batch_size: 4
   num_workers: 0
-  epochs: 200
+  epochs: 100
   learning_rate: 0.0003
   weight_decay: 0.0001
   bce_weight: 1.0
   dice_weight: 1.0
   positive_weight: 20.0
   dice_on_positive_patches_only: true
-  early_stopping_patience: 50
+  early_stopping_patience: 20
+  full_val_interval: 5
   text_column: text_lvit_prompt
   output_dir: experiments/E2_unet_patch384_preprocessed_pos060
 
 metrics:
   threshold: 0.5
   min_fp_area_ratio: 0.001
+
+sliding_window:
+  patch_size: 384
+  stride: 192
+  merge: average_probability
+  batch_size: 4
