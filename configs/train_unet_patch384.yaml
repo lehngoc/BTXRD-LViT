@@ -1,0 +1,35 @@
+experiment:
+  name: E2_unet_patch384_preprocessed_pos060
+
+data:
+  root_dir: .
+  train_csv: data/exports/patches_jitter/patches_384/metadata.csv
+  val_csv: data/exports/patches_jitter_val/patches_384/metadata.csv
+  test_csv: data/exports/patches_jitter_test/patches_384/metadata.csv
+
+model:
+  name: unet
+  in_channels: 3
+  out_channels: 1
+  base_channels: 32
+
+training:
+  seed: 42
+  device: auto
+  image_size: 384
+  batch_size: 4
+  num_workers: 0
+  epochs: 200
+  learning_rate: 0.0003
+  weight_decay: 0.0001
+  bce_weight: 1.0
+  dice_weight: 1.0
+  positive_weight: 20.0
+  dice_on_positive_patches_only: true
+  early_stopping_patience: 50
+  text_column: text_lvit_prompt
+  output_dir: experiments/E2_unet_patch384_preprocessed_pos060
+
+metrics:
+  threshold: 0.5
+  min_fp_area_ratio: 0.001
