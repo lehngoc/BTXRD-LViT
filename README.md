@@ -129,6 +129,15 @@ Metrics are reported separately for all cases, tumor cases, and normal cases. No
 
 The current E1 config uses `positive_weight: 20.0` for BCE and computes DiceLoss on tumor samples only. This keeps normal cases in training for false-positive control while preventing empty-mask normal cases from dominating the Dice objective.
 
+E1 is split into two UNet baselines:
+
+```text
+E1a: preprocessed 224x224 tumor-only UNet
+E1b: preprocessed 224x224 normal-aware UNet
+```
+
+Use E1a to compare segmentation behavior against the historical tumor-only E0 run. Use E1b to study normal false positives.
+
 For normal cases, use `normal_pred_area_ratio` and `normal_fp_image_rate` as the main false-positive metrics. `normal_precision` and `normal_recall` are logged for completeness, but they are not very interpretable when the ground-truth mask is empty.
 
 The dataset reader normalizes Windows-style paths from exported CSV files, so manifests containing paths such as `data\processed\images_preprocessed\IMG000001.jpg` can also run on Linux/Kaggle. Set `data.root_dir` in the config when the dataset root is not the repository root.
@@ -140,7 +149,7 @@ For 50% label experiments, note that the current `label_fraction < 1` behavior k
 Use this notebook for the full E1 run on Kaggle instead of training on local CPU:
 
 ```text
-notebooks/E1_unet_preprocessed_224_kaggle.ipynb
+notebooks/E1b_unet_normal_aware_224_kaggle.ipynb
 ```
 
 Kaggle setup:
@@ -156,6 +165,34 @@ Kaggle outputs are written to:
 ```text
 /kaggle/working/experiments/E1_unet_preprocessed_224_weighted_loss/
 /kaggle/working/E1_unet_preprocessed_224_weighted_loss_artifacts.zip
+```
+
+For E1a tumor-only training on Kaggle, use:
+
+```text
+notebooks/E1a_unet_tumor_only_224_kaggle.ipynb
+```
+
+For E1b normal-aware training on Kaggle, use:
+
+```text
+notebooks/E1b_unet_normal_aware_224_kaggle.ipynb
+```
+
+E1a writes metrics-only artifacts to:
+
+```text
+/kaggle/working/experiments/E1a_unet_preprocessed_224_tumor_only/
+/kaggle/working/E1a_unet_tumor_only_metrics_only.zip
+```
+
+To visualize UNet predictions from a checkpoint:
+
+```bash
+python src/training/visualize_unet_predictions.py \
+  --config configs/train_unet_baseline.yaml \
+  --checkpoint experiments/E1_unet_preprocessed_224_weighted_loss/best.pt \
+  --split val
 ```
 
 ## Git Tracking Notes
@@ -206,6 +243,7 @@ Note: `data/raw/dataset.csv` is currently tracked in Git even though `.gitignore
 configs/
   preprocess.yaml
   train_unet_baseline.yaml
+  train_unet_tumor_only.yaml
   splits/
     btxrd_split_seed42.csv
 data/
@@ -227,7 +265,8 @@ data/
 docs/
   dataset_pipeline.md
 notebooks/
-  E1_unet_preprocessed_224_kaggle.ipynb
+  E1a_unet_tumor_only_224_kaggle.ipynb
+  E1b_unet_normal_aware_224_kaggle.ipynb
 scripts/
   01_prepare_btxrd.bat
   01_prepare_btxrd.sh
@@ -235,6 +274,10 @@ scripts/
   02_train_unet_baseline.sh
   03_evaluate_unet_baseline.bat
   03_evaluate_unet_baseline.sh
+  04_train_unet_tumor_only.bat
+  04_train_unet_tumor_only.sh
+  05_evaluate_unet_tumor_only.bat
+  05_evaluate_unet_tumor_only.sh
 src/
   export/
     export_training_dataset.py
@@ -260,6 +303,7 @@ src/
     smoke_test_model_pipeline.py
     train_unet.py
     utils.py
+    visualize_unet_predictions.py
 .gitignore
 README.md
 requirements.txt

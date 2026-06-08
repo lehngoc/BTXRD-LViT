@@ -40,6 +40,7 @@ def build_dataset(split_cfg: dict[str, Any], train_cfg: dict[str, Any], split_na
         max_samples=max_samples,
         label_fraction=label_fraction,
         label_seed=train_cfg.get("seed", 42),
+        tumor_only=split_cfg.get("tumor_only", train_cfg.get("tumor_only", False)),
         root_dir=split_cfg.get("root_dir", "."),
     )
 

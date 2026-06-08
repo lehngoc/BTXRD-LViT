@@ -44,6 +44,7 @@ def main() -> None:
         image_size=train_cfg["image_size"],
         include_text=True,
         text_column=train_cfg.get("text_column", "text_lvit_prompt"),
+        tumor_only=data_cfg.get("tumor_only", train_cfg.get("tumor_only", False)),
         root_dir=data_cfg.get("root_dir", "."),
     )
     loader = DataLoader(

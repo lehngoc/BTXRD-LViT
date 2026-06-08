@@ -37,6 +37,7 @@ class BTXRDSegmentationDataset(Dataset):
         max_samples: int | None = None,
         label_fraction: float = 1.0,
         label_seed: int = 42,
+        tumor_only: bool = False,
         root_dir: str | Path = ".",
     ) -> None:
         self.root_dir = Path(root_dir)
@@ -52,6 +53,7 @@ class BTXRDSegmentationDataset(Dataset):
 
         self.df = pd.read_csv(self.csv_path)
         self._validate_columns()
+        self.df = self._apply_tumor_filter(self.df, tumor_only)
         self.df = self._apply_label_fraction(self.df, label_fraction, label_seed)
 
         if max_samples is not None:
@@ -76,6 +78,13 @@ class BTXRDSegmentationDataset(Dataset):
 
         if self.include_text and self.text_column not in self.df.columns:
             raise ValueError(f"Missing text column in {self.csv_path}: {self.text_column}")
+
+    @staticmethod
+    def _apply_tumor_filter(df: pd.DataFrame, tumor_only: bool) -> pd.DataFrame:
+        if not tumor_only:
+            return df
+
+        return df[df["tumor"].astype(int) == 1].copy()
 
     def _resolve_input_csv_path(self, path_value: str | Path) -> Path:
         path = Path(str(path_value).replace("\\", "/"))
