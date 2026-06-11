@@ -65,3 +65,63 @@ class BCEDiceLoss(nn.Module):
         dice_loss = self.dice(logits, targets, sample_mask=dice_sample_mask)
 
         return self.bce_weight * bce_loss + self.dice_weight * dice_loss
+
+
+class LegacyWeightedDiceBCELoss(nn.Module):
+    """Probability-space weighted Dice+BCE loss used for UNet-Strong comparisons."""
+
+    def __init__(
+        self,
+        dice_weight: float = 0.5,
+        bce_weight: float = 0.5,
+        foreground_weight: float = 0.3,
+        background_weight: float = 0.7,
+        smooth: float = 1e-5,
+    ) -> None:
+        super().__init__()
+        self.dice_weight = dice_weight
+        self.bce_weight = bce_weight
+        self.foreground_weight = foreground_weight
+        self.background_weight = background_weight
+        self.smooth = smooth
+
+    def _weighted_bce(self, probs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        probs = probs.flatten()
+        targets = targets.flatten()
+        loss = F.binary_cross_entropy(probs, targets, reduction="none")
+        pos = (targets > 0.5).float()
+        neg = (targets < 0.5).float()
+        pos_count = pos.sum().clamp_min(1e-12)
+        neg_count = neg.sum().clamp_min(1e-12)
+
+        return (
+            self.foreground_weight * pos * loss / pos_count
+            + self.background_weight * neg * loss / neg_count
+        ).sum()
+
+    def _weighted_dice(self, probs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        batch_size = probs.shape[0]
+        probs = probs.flatten(start_dim=1)
+        targets = targets.flatten(start_dim=1)
+        weights = targets.detach() * (self.background_weight - self.foreground_weight) + self.foreground_weight
+        probs = weights * probs
+        targets = weights * targets
+
+        intersection = (probs * targets).sum(dim=1)
+        denominator = (probs * probs).sum(dim=1) + (targets * targets).sum(dim=1)
+        dice_loss = 1 - (2 * intersection + self.smooth) / (denominator + self.smooth)
+
+        return dice_loss.view(batch_size).mean()
+
+    def forward(
+        self,
+        logits: torch.Tensor,
+        targets: torch.Tensor,
+        tumor: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        del tumor
+        probs = torch.sigmoid(logits).clamp(min=1e-6, max=1 - 1e-6)
+        bce = self._weighted_bce(probs, targets)
+        dice = self._weighted_dice(probs, targets)
+
+        return self.bce_weight * bce + self.dice_weight * dice

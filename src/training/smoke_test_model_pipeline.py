@@ -23,11 +23,21 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def check_dataset(csv_path: str, root_dir: str, image_size: int, samples: int, tumor_only: bool) -> None:
+def check_dataset(
+    csv_path: str,
+    root_dir: str,
+    image_size: int,
+    samples: int,
+    tumor_only: bool,
+    image_mean: tuple[float, float, float],
+    image_std: tuple[float, float, float],
+) -> None:
     dataset = BTXRDSegmentationDataset(
         csv_path=csv_path,
         root_dir=root_dir,
         image_size=image_size,
+        image_mean=image_mean,
+        image_std=image_std,
         max_samples=samples,
         tumor_only=tumor_only,
     )
@@ -45,11 +55,21 @@ def check_dataset(csv_path: str, root_dir: str, image_size: int, samples: int, t
             assert int(sample["tumor"].item()) == 1
 
 
-def check_forward_backward(train_csv: str, root_dir: str, image_size: int, batch_size: int, tumor_only: bool) -> None:
+def check_forward_backward(
+    train_csv: str,
+    root_dir: str,
+    image_size: int,
+    batch_size: int,
+    tumor_only: bool,
+    image_mean: tuple[float, float, float],
+    image_std: tuple[float, float, float],
+) -> None:
     dataset = BTXRDSegmentationDataset(
         csv_path=train_csv,
         root_dir=root_dir,
         image_size=image_size,
+        image_mean=image_mean,
+        image_std=image_std,
         max_samples=max(batch_size, 2),
         tumor_only=tumor_only,
     )
@@ -70,11 +90,21 @@ def main() -> None:
     args = parse_args()
     cfg = load_config(args.config)
     image_size = int(cfg["training"]["image_size"])
+    image_mean = tuple(cfg["training"].get("image_mean", (0.485, 0.456, 0.406)))
+    image_std = tuple(cfg["training"].get("image_std", (0.229, 0.224, 0.225)))
     root_dir = cfg["data"].get("root_dir", ".")
     tumor_only = cfg["data"].get("tumor_only", cfg["training"].get("tumor_only", False))
 
     for split in ["train", "val", "test"]:
-        check_dataset(cfg["data"][f"{split}_csv"], root_dir, image_size, args.samples_per_split, tumor_only)
+        check_dataset(
+            cfg["data"][f"{split}_csv"],
+            root_dir,
+            image_size,
+            args.samples_per_split,
+            tumor_only,
+            image_mean,
+            image_std,
+        )
 
     check_forward_backward(
         cfg["data"]["train_csv"],
@@ -82,6 +112,8 @@ def main() -> None:
         image_size,
         batch_size=min(2, cfg["training"]["batch_size"]),
         tumor_only=tumor_only,
+        image_mean=image_mean,
+        image_std=image_std,
     )
 
     print("BTXRD model pipeline smoke test passed.")

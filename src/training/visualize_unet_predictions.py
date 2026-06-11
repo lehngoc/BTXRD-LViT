@@ -112,6 +112,8 @@ def main() -> None:
     dataset = BTXRDSegmentationDataset(
         csv_path=data_cfg[f"{args.split}_csv"],
         image_size=train_cfg["image_size"],
+        image_mean=tuple(train_cfg.get("image_mean", (0.485, 0.456, 0.406))),
+        image_std=tuple(train_cfg.get("image_std", (0.229, 0.224, 0.225))),
         include_text=True,
         text_column=train_cfg.get("text_column", "text_lvit_prompt"),
         max_samples=args.max_samples,

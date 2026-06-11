@@ -14,7 +14,7 @@ if __package__ is None or __package__ == "":
 
 from src.data import BTXRDSegmentationDataset
 from src.models import UNet
-from src.training.losses import BCEDiceLoss
+from src.training.losses import BCEDiceLoss, LegacyWeightedDiceBCELoss
 from src.training.metrics import SegmentationMetricAccumulator
 from src.training.utils import append_history_row, get_device, load_config, save_json, set_seed
 
@@ -35,12 +35,16 @@ def build_dataset(split_cfg: dict[str, Any], train_cfg: dict[str, Any], split_na
     return BTXRDSegmentationDataset(
         csv_path=split_cfg[f"{split_name}_csv"],
         image_size=train_cfg["image_size"],
+        image_mean=tuple(train_cfg.get("image_mean", (0.485, 0.456, 0.406))),
+        image_std=tuple(train_cfg.get("image_std", (0.229, 0.224, 0.225))),
         include_text=True,
         text_column=train_cfg.get("text_column", "text_lvit_prompt"),
         max_samples=max_samples,
         label_fraction=label_fraction,
         label_seed=train_cfg.get("seed", 42),
         tumor_only=split_cfg.get("tumor_only", train_cfg.get("tumor_only", False)),
+        augment=split_name == "train" and train_cfg.get("augmentation", {}).get("enabled", False),
+        legacy_augment=split_name == "train" and train_cfg.get("augmentation", {}).get("type", "") == "legacy_lvit",
         root_dir=split_cfg.get("root_dir", "."),
     )
 
@@ -61,6 +65,7 @@ def run_epoch(
     criterion: torch.nn.Module,
     device: torch.device,
     optimizer: torch.optim.Optimizer | None = None,
+    accumulation_steps: int = 1,
     threshold: float = 0.5,
     min_fp_area_ratio: float = 0.001,
 ) -> dict[str, float]:
@@ -69,8 +74,12 @@ def run_epoch(
     metrics = SegmentationMetricAccumulator(threshold=threshold, min_fp_area_ratio=min_fp_area_ratio)
     total_loss = 0.0
     total_samples = 0
+    accumulation_steps = max(int(accumulation_steps), 1)
 
-    for batch in tqdm(loader, leave=False):
+    if train:
+        optimizer.zero_grad(set_to_none=True)
+
+    for step, batch in enumerate(tqdm(loader, leave=False), start=1):
         images = batch["image"].to(device)
         masks = batch["mask"].to(device)
         tumor = batch["tumor"].to(device)
@@ -80,9 +89,10 @@ def run_epoch(
             loss = criterion(logits, masks, tumor=tumor)
 
             if train:
-                optimizer.zero_grad(set_to_none=True)
-                loss.backward()
-                optimizer.step()
+                (loss / accumulation_steps).backward()
+                if step % accumulation_steps == 0 or step == len(loader):
+                    optimizer.step()
+                    optimizer.zero_grad(set_to_none=True)
 
         batch_size = images.shape[0]
         total_loss += float(loss.item()) * batch_size
@@ -93,6 +103,60 @@ def run_epoch(
     output["loss"] = total_loss / max(total_samples, 1)
 
     return output
+
+
+def build_criterion(train_cfg: dict[str, Any]) -> torch.nn.Module:
+    loss_type = train_cfg.get("loss_type", "bce_dice")
+
+    if loss_type == "bce_dice":
+        return BCEDiceLoss(
+            bce_weight=train_cfg.get("bce_weight", 1.0),
+            dice_weight=train_cfg.get("dice_weight", 1.0),
+            positive_weight=train_cfg.get("positive_weight"),
+            dice_on_tumor_only=train_cfg.get("dice_on_tumor_only", False),
+        )
+
+    if loss_type == "legacy_weighted_dice_bce":
+        return LegacyWeightedDiceBCELoss(
+            bce_weight=train_cfg.get("bce_weight", 0.5),
+            dice_weight=train_cfg.get("dice_weight", 0.5),
+            foreground_weight=train_cfg.get("foreground_weight", 0.3),
+            background_weight=train_cfg.get("background_weight", 0.7),
+        )
+
+    raise ValueError(f"Unsupported loss_type: {loss_type}")
+
+
+def build_optimizer(model: torch.nn.Module, train_cfg: dict[str, Any]) -> torch.optim.Optimizer:
+    optimizer_name = train_cfg.get("optimizer", "adamw").lower()
+    lr = train_cfg["learning_rate"]
+    weight_decay = train_cfg.get("weight_decay", 0.0)
+
+    if optimizer_name == "adamw":
+        return torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+
+    if optimizer_name == "adam":
+        return torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+
+    raise ValueError(f"Unsupported optimizer: {optimizer_name}")
+
+
+def build_scheduler(optimizer: torch.optim.Optimizer, train_cfg: dict[str, Any]):
+    scheduler_cfg = train_cfg.get("scheduler", {})
+    scheduler_name = scheduler_cfg.get("name", "none")
+
+    if scheduler_name in (None, "none"):
+        return None
+
+    if scheduler_name == "cosine_warm_restarts":
+        return torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            optimizer,
+            T_0=scheduler_cfg.get("t_0", 10),
+            T_mult=scheduler_cfg.get("t_mult", 1),
+            eta_min=scheduler_cfg.get("eta_min", 1e-4),
+        )
+
+    raise ValueError(f"Unsupported scheduler: {scheduler_name}")
 
 
 def main() -> None:
@@ -126,17 +190,9 @@ def main() -> None:
         base_channels=model_cfg.get("base_channels", 32),
     ).to(device)
 
-    criterion = BCEDiceLoss(
-        bce_weight=train_cfg.get("bce_weight", 1.0),
-        dice_weight=train_cfg.get("dice_weight", 1.0),
-        positive_weight=train_cfg.get("positive_weight"),
-        dice_on_tumor_only=train_cfg.get("dice_on_tumor_only", False),
-    )
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=train_cfg["learning_rate"],
-        weight_decay=train_cfg.get("weight_decay", 0.0),
-    )
+    criterion = build_criterion(train_cfg)
+    optimizer = build_optimizer(model, train_cfg)
+    scheduler = build_scheduler(optimizer, train_cfg)
 
     best_val_dice = -1.0
     best_epoch = 0
@@ -151,6 +207,7 @@ def main() -> None:
             criterion,
             device,
             optimizer=optimizer,
+            accumulation_steps=train_cfg.get("accumulation_steps", 1),
             threshold=metric_cfg.get("threshold", 0.5),
             min_fp_area_ratio=metric_cfg.get("min_fp_area_ratio", 0.001),
         )
@@ -163,6 +220,8 @@ def main() -> None:
             threshold=metric_cfg.get("threshold", 0.5),
             min_fp_area_ratio=metric_cfg.get("min_fp_area_ratio", 0.001),
         )
+        if scheduler is not None:
+            scheduler.step()
 
         row = {"epoch": epoch}
         row.update({f"train_{key}": value for key, value in train_metrics.items()})
@@ -176,6 +235,7 @@ def main() -> None:
             "epoch": epoch,
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
+            "scheduler_state_dict": scheduler.state_dict() if scheduler is not None else None,
             "config": cfg,
             "val_metrics": val_metrics,
         }
@@ -195,6 +255,7 @@ def main() -> None:
             f"train_loss={train_metrics['loss']:.4f} "
             f"val_loss={val_metrics['loss']:.4f} "
             f"val_tumor_dice={val_metrics['tumor_dice']:.4f} "
+            f"lr={optimizer.param_groups[0]['lr']:.2e} "
             f"best={best_val_dice:.4f}@{best_epoch}"
         )
 
