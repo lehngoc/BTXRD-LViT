@@ -33,7 +33,7 @@ def build_model(cfg: dict[str, Any]) -> torch.nn.Module:
         out_channels=model_cfg.get("out_channels", 1),
         base_channels=model_cfg.get("base_channels", 64),
         transformer_depth=model_cfg.get("transformer_depth", 1),
-        transformer_heads=model_cfg.get("transformer_heads", 8),
+        transformer_heads=model_cfg.get("transformer_heads", 4),
         transformer_dropout=model_cfg.get("transformer_dropout", 0.0),
         image_size=cfg["training"]["image_size"],
         text_encoder_provider=model_cfg.get("text_encoder_provider", "huggingface"),

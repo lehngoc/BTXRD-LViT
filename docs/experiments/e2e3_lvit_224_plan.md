@@ -50,6 +50,7 @@ The E2/E3 model code should stay close to the original HUANGLIZI/LViT architectu
 - Multi-scale ViT blocks with patch sizes `[16, 8, 4, 2]`.
 - PLAM skip attention.
 - Base channel `64`.
+- Transformer heads `4`, matching the original LViT config.
 - Text feature interface shaped `[B, 10, 768]`.
 
 Intentional BTXRD-port differences:

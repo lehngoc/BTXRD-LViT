@@ -30,6 +30,8 @@ eval = full test tumor+normal
 threshold sweep = 0.3, 0.4, 0.5, 0.6, 0.7
 ```
 
+The main E2/E3 configs use `transformer_heads: 4` to match the original LViT config. Earlier H8 runs can be kept as exploratory artifacts, but the H4 runs are the closer-to-original baseline.
+
 The only intended experiment difference is:
 
 ```text

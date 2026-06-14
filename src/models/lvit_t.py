@@ -106,7 +106,7 @@ class LViTT(LViTTW):
         out_channels: int = 1,
         base_channels: int = 64,
         transformer_depth: int = 1,
-        transformer_heads: int = 8,
+        transformer_heads: int = 4,
         transformer_dropout: float = 0.0,
         image_size: int = 224,
         text_encoder_provider: str = "huggingface",

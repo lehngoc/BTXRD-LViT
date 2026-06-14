@@ -1,5 +1,5 @@
 experiment:
-  name: E2_lvit_tw_preprocessed_224_tumor_only
+  name: E2_lvit_tw_preprocessed_224_tumor_only_h4
 
 data:
   root_dir: .
@@ -15,7 +15,7 @@ model:
   out_channels: 1
   base_channels: 64
   transformer_depth: 1
-  transformer_heads: 8
+  transformer_heads: 4
   transformer_dropout: 0.0
   text_embed_dim: 768
   text_max_tokens: 10
@@ -41,7 +41,7 @@ training:
   early_stopping_patience: 100
   label_fraction: 1.0
   text_column: text_lvit_prompt
-  output_dir: experiments/E2_lvit_tw_preprocessed_224_tumor_only
+  output_dir: experiments/E2_lvit_tw_preprocessed_224_tumor_only_h4
   augmentation:
     enabled: true
     type: legacy_lvit
