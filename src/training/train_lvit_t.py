@@ -31,13 +31,18 @@ def build_model(cfg: dict[str, Any]) -> torch.nn.Module:
     return LViTT(
         in_channels=model_cfg.get("in_channels", 3),
         out_channels=model_cfg.get("out_channels", 1),
-        base_channels=model_cfg.get("base_channels", 48),
-        transformer_depth=model_cfg.get("transformer_depth", 2),
-        transformer_heads=model_cfg.get("transformer_heads", 4),
+        base_channels=model_cfg.get("base_channels", 64),
+        transformer_depth=model_cfg.get("transformer_depth", 1),
+        transformer_heads=model_cfg.get("transformer_heads", 8),
         transformer_dropout=model_cfg.get("transformer_dropout", 0.0),
-        text_vocab_size=model_cfg.get("text_vocab_size", 4096),
-        text_embed_dim=model_cfg.get("text_embed_dim", 128),
-        text_max_tokens=model_cfg.get("text_max_tokens", 48),
+        image_size=cfg["training"]["image_size"],
+        text_encoder_provider=model_cfg.get("text_encoder_provider", "huggingface"),
+        text_encoder_model_name=model_cfg.get("text_encoder_model_name", "bert-base-uncased"),
+        text_vocab_size=model_cfg.get("text_vocab_size", 8192),
+        text_embed_dim=model_cfg.get("text_embed_dim", 768),
+        text_max_tokens=model_cfg.get("text_max_tokens", 10),
+        text_encoder_freeze=model_cfg.get("text_encoder_freeze", True),
+        text_encoder_local_files_only=model_cfg.get("text_encoder_local_files_only", False),
     )
 
 

@@ -42,6 +42,23 @@ E2: no text
 E3: text_lvit_prompt
 ```
 
+## LViT Port Policy
+
+The E2/E3 model code should stay close to the original HUANGLIZI/LViT architecture:
+
+- Double-U CNN + ViT structure.
+- Multi-scale ViT blocks with patch sizes `[16, 8, 4, 2]`.
+- PLAM skip attention.
+- Base channel `64`.
+- Text feature interface shaped `[B, 10, 768]`.
+
+Intentional BTXRD-port differences:
+
+- E3 uses HuggingFace BERT as a maintained replacement for the original `bert_embedding` package.
+- Models return raw logits; shared BTXRD losses and metrics apply sigmoid.
+- E2 is a no-text control using the same LViT backbone with zero text features.
+- Training/evaluation follows the BTXRD seed42, tumor-only train, full-test Q3 protocol.
+
 ## Scope Control
 
 This branch should not become another UNet branch:

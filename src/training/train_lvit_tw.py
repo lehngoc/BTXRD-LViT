@@ -127,10 +127,13 @@ def build_model(cfg: dict[str, Any]) -> torch.nn.Module:
     return LViTTW(
         in_channels=model_cfg.get("in_channels", 3),
         out_channels=model_cfg.get("out_channels", 1),
-        base_channels=model_cfg.get("base_channels", 48),
-        transformer_depth=model_cfg.get("transformer_depth", 2),
-        transformer_heads=model_cfg.get("transformer_heads", 4),
+        base_channels=model_cfg.get("base_channels", 64),
+        transformer_depth=model_cfg.get("transformer_depth", 1),
+        transformer_heads=model_cfg.get("transformer_heads", 8),
         transformer_dropout=model_cfg.get("transformer_dropout", 0.0),
+        image_size=cfg["training"]["image_size"],
+        text_tokens=model_cfg.get("text_max_tokens", 10),
+        text_dim=model_cfg.get("text_embed_dim", 768),
     )
 
 

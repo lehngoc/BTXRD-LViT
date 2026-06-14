@@ -37,6 +37,16 @@ E2: no text
 E3: text_lvit_prompt
 ```
 
+Model-port policy:
+
+```text
+Architecture: port the original LViT Double-U CNN/ViT design as closely as practical.
+Text encoder: use HuggingFace BERT as a maintained replacement for the original bert_embedding dependency.
+Text interface: preserve the original [B, 10, 768] tensor shape.
+Output API: return raw logits; BTXRD losses/metrics apply sigmoid centrally.
+Training/eval: keep the BTXRD protocol for fair E1as/E2/E3 comparison.
+```
+
 ## Completed Previous Work
 
 The data pipeline and UNet phase are frozen in docs:
@@ -86,6 +96,12 @@ notebooks/E2_lvit_tw_preprocessed_224_kaggle.ipynb
 ```
 
 ## Run E3
+
+E3 requires HuggingFace `transformers` for the default BERT text encoder:
+
+```bash
+pip install -r requirements.txt
+```
 
 Local smoke test:
 

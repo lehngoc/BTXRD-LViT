@@ -13,13 +13,17 @@ model:
   name: lvit_t
   in_channels: 3
   out_channels: 1
-  base_channels: 48
-  transformer_depth: 2
-  transformer_heads: 4
+  base_channels: 64
+  transformer_depth: 1
+  transformer_heads: 8
   transformer_dropout: 0.0
-  text_vocab_size: 4096
-  text_embed_dim: 128
-  text_max_tokens: 48
+  text_encoder_provider: huggingface
+  text_encoder_model_name: bert-base-uncased
+  text_encoder_freeze: true
+  text_encoder_local_files_only: false
+  text_vocab_size: 8192
+  text_embed_dim: 768
+  text_max_tokens: 10
 
 training:
   seed: 42
@@ -27,8 +31,8 @@ training:
   image_size: 224
   image_mean: [0.0, 0.0, 0.0]
   image_std: [1.0, 1.0, 1.0]
-  batch_size: 4
-  accumulation_steps: 2
+  batch_size: 2
+  accumulation_steps: 1
   num_workers: 0
   epochs: 200
   learning_rate: 0.0003
