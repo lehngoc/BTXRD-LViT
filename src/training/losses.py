@@ -68,7 +68,7 @@ class BCEDiceLoss(nn.Module):
 
 
 class LegacyWeightedDiceBCELoss(nn.Module):
-    """Probability-space weighted Dice+BCE loss used for UNet-Strong comparisons."""
+    """Probability-space weighted Dice+BCE loss used for controlled 224x224 comparisons."""
 
     def __init__(
         self,

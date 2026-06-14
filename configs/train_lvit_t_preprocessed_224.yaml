@@ -1,18 +1,25 @@
 experiment:
-  name: E1bs_unet_strong_preprocessed_224_normal_aware
+  name: E3_lvit_t_preprocessed_224_tumor_only
 
 data:
   root_dir: .
-  tumor_only: false
+  train_tumor_only: true
+  eval_tumor_only: false
   train_csv: data/exports/btxrd_preprocessed/train.csv
   val_csv: data/exports/btxrd_preprocessed/val.csv
   test_csv: data/exports/btxrd_preprocessed/test.csv
 
 model:
-  name: unet
+  name: lvit_t
   in_channels: 3
   out_channels: 1
-  base_channels: 64
+  base_channels: 48
+  transformer_depth: 2
+  transformer_heads: 4
+  transformer_dropout: 0.0
+  text_vocab_size: 4096
+  text_embed_dim: 128
+  text_max_tokens: 48
 
 training:
   seed: 42
@@ -35,7 +42,7 @@ training:
   early_stopping_patience: 100
   label_fraction: 1.0
   text_column: text_lvit_prompt
-  output_dir: experiments/E1bs_unet_strong_preprocessed_224_normal_aware
+  output_dir: experiments/E3_lvit_t_preprocessed_224_tumor_only
   augmentation:
     enabled: true
     type: legacy_lvit
@@ -47,4 +54,5 @@ training:
 
 metrics:
   threshold: 0.5
+  threshold_sweep: [0.3, 0.4, 0.5, 0.6, 0.7]
   min_fp_area_ratio: 0.001
