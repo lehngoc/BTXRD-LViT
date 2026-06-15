@@ -78,7 +78,7 @@ E2-50 / E3-50
 raw LViT
 normal-aware LViT
 negative-prompt ablations
-patch/high-resolution phase
+LViT-TW patch/high-resolution no-text comparison
 ```
 
 ## Required Final Comparison

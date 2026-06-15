@@ -95,6 +95,10 @@ def predict_sliding_window(
     stride: int = 192,
     batch_size: int = 4,
     merge: str = AVERAGE_PROBABILITY,
+    text_prompt: str | None = None,
+    image_mean: tuple[float, float, float] = IMAGENET_MEAN,
+    image_std: tuple[float, float, float] = IMAGENET_STD,
+    mixed_precision: bool = False,
 ) -> tuple[np.ndarray, int]:
     if image.ndim != 3 or image.shape[2] != 3:
         raise ValueError(f"Expected RGB image with shape (H, W, 3), got {image.shape}")
@@ -115,16 +119,29 @@ def predict_sliding_window(
 
     prob_sum = np.zeros((height, width), dtype=np.float32)
     count_sum = np.zeros((height, width), dtype=np.float32)
+    text_features: torch.Tensor | None = None
 
     model.eval()
     for start in range(0, len(windows), batch_size):
         batch_windows = windows[start : start + batch_size]
         batch = [
-            normalize_patch(padded_image[y : y + patch_size, x : x + patch_size])
+            normalize_patch(
+                padded_image[y : y + patch_size, x : x + patch_size],
+                mean=image_mean,
+                std=image_std,
+            )
             for x, y in batch_windows
         ]
         images = torch.stack(batch, dim=0).to(device)
-        logits = model(images)
+        with torch.autocast(device_type=device.type, enabled=mixed_precision and device.type == "cuda"):
+            if text_prompt is None:
+                logits = model(images)
+            else:
+                if text_features is None:
+                    if not hasattr(model, "prepare_text_features"):
+                        raise TypeError("Text-conditioned sliding-window inference requires prepare_text_features().")
+                    text_features = model.prepare_text_features([text_prompt], images[:1])
+                logits = model(images, text=text_features.expand(images.shape[0], -1, -1))
         probs = torch.sigmoid(logits).detach().cpu().numpy()[:, 0]
 
         for prob, (x, y) in zip(probs, batch_windows):
@@ -197,6 +214,10 @@ def evaluate_full_images(
     merge: str = AVERAGE_PROBABILITY,
     max_images: int | None = None,
     save_pred_dir: str | Path | None = None,
+    text_column: str | None = None,
+    image_mean: tuple[float, float, float] = IMAGENET_MEAN,
+    image_std: tuple[float, float, float] = IMAGENET_STD,
+    mixed_precision: bool = False,
 ) -> dict[str, Any]:
     if not 0.0 <= threshold <= 1.0:
         raise ValueError(f"threshold must be between 0 and 1, got {threshold}")
@@ -211,6 +232,8 @@ def evaluate_full_images(
     if not manifest_path.exists():
         raise FileNotFoundError(f"Missing full-image manifest: {manifest_path}")
     df = pd.read_csv(manifest_path)
+    if text_column is not None and text_column not in df.columns:
+        raise ValueError(f"Missing text column in {manifest_path}: {text_column}")
     if max_images is not None:
         df = df.head(max_images)
 
@@ -233,6 +256,11 @@ def evaluate_full_images(
                 .astype(np.uint8)
             )
 
+        text_prompt = None
+        if text_column is not None:
+            text_value = getattr(item, text_column)
+            text_prompt = "" if pd.isna(text_value) else str(text_value)
+
         probability, window_count = predict_sliding_window(
             model=model,
             image=image,
@@ -241,6 +269,10 @@ def evaluate_full_images(
             stride=stride,
             batch_size=batch_size,
             merge=merge,
+            text_prompt=text_prompt,
+            image_mean=image_mean,
+            image_std=image_std,
+            mixed_precision=mixed_precision,
         )
         is_tumor = int(item.tumor) == 1
         metrics = compute_sample_metrics(
@@ -278,6 +310,13 @@ def evaluate_full_images(
             "inference_batch_size": int(batch_size),
             "threshold": float(threshold),
             "post_processing": "none",
+            "text_column": text_column,
+            "text_conditioning": text_column is not None,
+            "mixed_precision": bool(mixed_precision and device.type == "cuda"),
+            "input_normalization": {
+                "mean": list(image_mean),
+                "std": list(image_std),
+            },
             "images": int(len(rows)),
             "avg_windows_per_image": float(sum(row["window_count"] for row in rows) / max(len(rows), 1)),
             "total_inference_seconds": float(elapsed),

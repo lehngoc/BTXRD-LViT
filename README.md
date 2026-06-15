@@ -1,19 +1,21 @@
 # BTXRD-LViT
 
-Clean BTXRD segmentation workspace for the E2/E3 LViT 224x224 phase.
+Clean BTXRD segmentation workspace for LViT 224x224 and Patch384 experiments.
 
 This branch intentionally keeps the active code focused on:
 
 ```text
 E2 = LViT-TW no-text on preprocessed BTXRD 224x224
 E3 = LViT-T with text_lvit_prompt on preprocessed BTXRD 224x224
+E4 = LViT-T with text_lvit_prompt trained on Patch384 and evaluated by full-image sliding-window
 ```
 
-The completed UNet phase is documented, but its training code, configs, and notebooks are not active in this branch.
+The branch also keeps the UNet Patch384 baseline active for high-resolution
+comparison.
 
 ## Current Branch Scope
 
-This branch answers Q2:
+The 224x224 E2/E3 phase answers Q2:
 
 ```text
 Does text_lvit_prompt help LViT compared with the no-text LViT baseline?
@@ -47,6 +49,8 @@ Text encoder: use HuggingFace BERT as a maintained replacement for the original 
 Text interface: preserve the original [B, 10, 768] tensor shape.
 Output API: return raw logits; BTXRD losses/metrics apply sigmoid centrally.
 Training/eval: keep the BTXRD protocol for fair E1as/E2/E3 comparison.
+Image input: use the original LViT E2/E3 recipe, `mean=[0,0,0]` and
+`std=[1,1,1]`, which is equivalent to RGB scaled to `[0,1]`.
 ```
 
 ## Completed Previous Work
@@ -163,6 +167,10 @@ src/models/lvit_tw.py
 src/models/lvit_t.py
 src/training/train_lvit_tw.py
 src/training/train_lvit_t.py
+configs/train_lvit_t_patch384.yaml
+notebooks/E4_lvit_t_patch384_text_kaggle.ipynb
+src/training/train_lvit_t_patch.py
+src/inference/evaluate_lvit_t_sliding_window.py
 ```
 
 Shared infrastructure:
@@ -184,7 +192,7 @@ Deferred work:
 - Raw LViT
 - Normal-aware LViT
 - Negative-prompt ablations
-- High-resolution patch-based segmentation
+- LViT-TW Patch384 no-text comparison
 
 ## Phase 3 UNet Patch384 Main Baseline
 
@@ -253,3 +261,48 @@ python src/inference/evaluate_unet_sliding_window.py --config configs/train_unet
 
 Use patch-level metrics only for training diagnostics. Report main validation
 and test results from full-image sliding-window evaluation.
+
+## Phase 4 Text-Conditioned LViT-T Patch384
+
+E4 trains LViT-T on the generated `384x384` patch dataset with
+`text_lvit_prompt`. The prompt describes the source full image and is reused
+for every sampled patch and every sliding window from that image.
+
+The main checkpoint is selected by full-image, text-conditioned sliding-window
+validation Dice rather than patch-level Dice. During sliding inference, BERT
+features are computed once per source image and reused across all its windows.
+
+Default settings:
+
+```text
+model = LViT-T, transformer_heads = 4
+text_encoder = frozen bert-base-uncased
+input = same as E2/E3: image_mean=[0,0,0], image_std=[1,1,1]
+patch_size = 384
+stride = 192
+training_batch_size = 1
+gradient_accumulation_steps = 4
+mixed_precision = true
+sliding_window_batch_size = 1
+merge = average_probability
+```
+
+Smoke test and train:
+
+```bash
+python src/training/smoke_test_lvit_t_patch_pipeline.py --config configs/train_lvit_t_patch384.yaml
+python src/training/train_lvit_t_patch.py --config configs/train_lvit_t_patch384.yaml --auto-resume
+```
+
+Full-image validation and test:
+
+```bash
+python src/inference/evaluate_lvit_t_sliding_window.py --config configs/train_lvit_t_patch384.yaml --checkpoint experiments/E4_lvit_t_patch384_text_h4/best.pt --split val
+python src/inference/evaluate_lvit_t_sliding_window.py --config configs/train_lvit_t_patch384.yaml --checkpoint experiments/E4_lvit_t_patch384_text_h4/best.pt --split test
+```
+
+Kaggle runner:
+
+```text
+notebooks/E4_lvit_t_patch384_text_kaggle.ipynb
+```

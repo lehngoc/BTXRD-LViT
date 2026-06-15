@@ -64,6 +64,7 @@ class HuggingFaceBertEmbedding(nn.Module):
         self.bert = AutoModel.from_pretrained(model_name, local_files_only=local_files_only)
         self.max_tokens = max_tokens
         self.freeze = freeze
+        self._frozen_feature_cache: dict[str, torch.Tensor] = {}
         bert_hidden_size = int(self.bert.config.hidden_size)
         self.proj = nn.Identity() if bert_hidden_size == hidden_size else nn.Linear(bert_hidden_size, hidden_size)
 
@@ -79,8 +80,22 @@ class HuggingFaceBertEmbedding(nn.Module):
         return self
 
     def forward(self, texts: list[str], device: torch.device) -> torch.Tensor:
+        texts = [str(text) for text in texts]
+        if self.freeze:
+            missing_texts = list(dict.fromkeys(text for text in texts if text not in self._frozen_feature_cache))
+            if missing_texts:
+                hidden = self._encode(missing_texts, device)
+                for text, features in zip(missing_texts, hidden):
+                    self._frozen_feature_cache[text] = features.detach().cpu()
+            hidden = torch.stack([self._frozen_feature_cache[text] for text in texts]).to(device)
+        else:
+            hidden = self._encode(texts, device)
+
+        return self.proj(hidden)
+
+    def _encode(self, texts: list[str], device: torch.device) -> torch.Tensor:
         encoded = self.tokenizer(
-            list(texts),
+            texts,
             padding="max_length",
             truncation=True,
             max_length=self.max_tokens,
@@ -94,7 +109,7 @@ class HuggingFaceBertEmbedding(nn.Module):
         else:
             hidden = self.bert(**encoded).last_hidden_state
 
-        return self.proj(hidden[:, : self.max_tokens, :])
+        return hidden[:, : self.max_tokens, :]
 
 
 class LViTT(LViTTW):

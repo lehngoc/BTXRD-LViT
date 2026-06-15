@@ -1,0 +1,67 @@
+experiment:
+  name: E4_lvit_t_patch384_text_h4
+
+data:
+  root_dir: .
+  train_csv: data/exports/patches_jitter/patches_384/metadata.csv
+  val_csv: data/exports/patches_jitter_val/patches_384/metadata.csv
+  test_csv: data/exports/patches_jitter_test/patches_384/metadata.csv
+  train_full_csv: data/exports/btxrd_preprocessed/train.csv
+  val_full_csv: data/exports/btxrd_preprocessed/val.csv
+  test_full_csv: data/exports/btxrd_preprocessed/test.csv
+
+model:
+  name: lvit_t
+  in_channels: 3
+  out_channels: 1
+  base_channels: 64
+  transformer_depth: 1
+  transformer_heads: 4
+  transformer_dropout: 0.0
+  text_encoder_provider: huggingface
+  text_encoder_model_name: bert-base-uncased
+  text_encoder_freeze: true
+  text_encoder_local_files_only: false
+  text_vocab_size: 8192
+  text_embed_dim: 768
+  text_max_tokens: 10
+
+training:
+  seed: 42
+  device: auto
+  image_size: 384
+  image_mean: [0.0, 0.0, 0.0]
+  image_std: [1.0, 1.0, 1.0]
+  batch_size: 1
+  accumulation_steps: 4
+  mixed_precision: true
+  num_workers: 0
+  epochs: 100
+  learning_rate: 0.0003
+  weight_decay: 0.0
+  optimizer: adam
+  loss_type: legacy_weighted_dice_bce
+  bce_weight: 0.5
+  dice_weight: 0.5
+  foreground_weight: 0.3
+  background_weight: 0.7
+  full_val_interval: 5
+  full_val_patience: 10
+  text_column: text_lvit_prompt
+  output_dir: experiments/E4_lvit_t_patch384_text_h4
+  scheduler:
+    name: cosine_warm_restarts
+    t_0: 10
+    t_mult: 1
+    eta_min: 0.0001
+
+metrics:
+  threshold: 0.5
+  threshold_sweep: [0.3, 0.4, 0.5, 0.6, 0.7]
+  min_fp_area_ratio: 0.001
+
+sliding_window:
+  patch_size: 384
+  stride: 192
+  merge: average_probability
+  batch_size: 1
