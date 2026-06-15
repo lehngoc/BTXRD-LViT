@@ -46,7 +46,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--min-component-area",
         type=int,
-        default=1,
+        default=10,
         help="Minimum connected-component area in pixels to keep as a lesion instance.",
     )
     return parser.parse_args()
@@ -524,6 +524,13 @@ def main() -> None:
             **counters,
             "valid_tumor_bbox_rows": int(len(stats_df)),
             "valid_lesion_instance_rows": int(len(stats_df)),
+            "tumor_images_with_multiple_bboxes": int(
+                (image_df["lesion_instances_in_image"] > 1).sum()
+            ),
+            "tumor_images_with_multiple_bboxes_ratio": float(
+                (image_df["lesion_instances_in_image"] > 1).sum()
+                / max(counters["tumor_rows"], 1)
+            ),
             "max_lesion_instances_per_image": int(image_df["lesion_instances_in_image"].max()),
         },
         "component_settings": {

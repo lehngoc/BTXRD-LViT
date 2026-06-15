@@ -14,6 +14,17 @@ from tqdm import tqdm
 
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
+IMAGENET_MEAN_TENSOR = torch.tensor(IMAGENET_MEAN, dtype=torch.float32).view(3, 1, 1)
+IMAGENET_STD_TENSOR = torch.tensor(IMAGENET_STD, dtype=torch.float32).view(3, 1, 1)
+AVERAGE_PROBABILITY = "average_probability"
+GROUP_METRIC_NAMES = [
+    "dice",
+    "iou",
+    "precision",
+    "recall",
+    "pred_area_ratio",
+    "target_area_ratio",
+]
 
 
 def resolve_path(path_value: str | Path, root_dir: str | Path) -> Path:
@@ -24,6 +35,13 @@ def resolve_path(path_value: str | Path, root_dir: str | Path) -> Path:
 
 
 def window_starts(length: int, patch_size: int, stride: int) -> list[int]:
+    if length <= 0:
+        raise ValueError(f"length must be positive, got {length}")
+    if patch_size <= 0:
+        raise ValueError(f"patch_size must be positive, got {patch_size}")
+    if stride <= 0:
+        raise ValueError(f"stride must be positive, got {stride}")
+
     if length <= patch_size:
         return [0]
     starts = list(range(0, length - patch_size + 1, stride))
@@ -40,8 +58,16 @@ def normalize_patch(
 ) -> torch.Tensor:
     patch = patch.astype(np.float32) / 255.0
     tensor = torch.from_numpy(patch).permute(2, 0, 1)
-    mean_tensor = torch.tensor(mean, dtype=torch.float32).view(3, 1, 1)
-    std_tensor = torch.tensor(std, dtype=torch.float32).view(3, 1, 1)
+    mean_tensor = (
+        IMAGENET_MEAN_TENSOR
+        if mean == IMAGENET_MEAN
+        else torch.tensor(mean, dtype=torch.float32).view(3, 1, 1)
+    )
+    std_tensor = (
+        IMAGENET_STD_TENSOR
+        if std == IMAGENET_STD
+        else torch.tensor(std, dtype=torch.float32).view(3, 1, 1)
+    )
     return (tensor - mean_tensor) / std_tensor
 
 
@@ -68,7 +94,18 @@ def predict_sliding_window(
     patch_size: int = 384,
     stride: int = 192,
     batch_size: int = 4,
+    merge: str = AVERAGE_PROBABILITY,
 ) -> tuple[np.ndarray, int]:
+    if image.ndim != 3 or image.shape[2] != 3:
+        raise ValueError(f"Expected RGB image with shape (H, W, 3), got {image.shape}")
+    if batch_size <= 0:
+        raise ValueError(f"batch_size must be positive, got {batch_size}")
+    if merge != AVERAGE_PROBABILITY:
+        raise ValueError(
+            f"Unsupported sliding-window merge method: {merge}. "
+            f"Only {AVERAGE_PROBABILITY} is implemented."
+        )
+
     original_h, original_w = image.shape[:2]
     padded_image, _ = pad_image_to_patch(image, patch_size)
     height, width = padded_image.shape[:2]
@@ -137,10 +174,10 @@ def aggregate_group_metrics(rows: list[dict[str, Any]]) -> dict[str, float]:
         prefix = f"{group_name}_"
         output[f"{prefix}count"] = float(len(group_rows))
         if not group_rows:
-            for metric in ["dice", "iou", "precision", "recall", "pred_area_ratio", "target_area_ratio", "fp_image_rate"]:
+            for metric in [*GROUP_METRIC_NAMES, "fp_image_rate"]:
                 output[f"{prefix}{metric}"] = 0.0
             continue
-        for metric in ["dice", "iou", "precision", "recall", "pred_area_ratio", "target_area_ratio"]:
+        for metric in GROUP_METRIC_NAMES:
             output[f"{prefix}{metric}"] = float(sum(row[metric] for row in group_rows) / len(group_rows))
         output[f"{prefix}fp_image_rate"] = float(sum(row["fp_image"] for row in group_rows) / len(group_rows))
     return output
@@ -157,10 +194,22 @@ def evaluate_full_images(
     batch_size: int,
     threshold: float,
     min_fp_area_ratio: float,
+    merge: str = AVERAGE_PROBABILITY,
     max_images: int | None = None,
     save_pred_dir: str | Path | None = None,
 ) -> dict[str, Any]:
+    if not 0.0 <= threshold <= 1.0:
+        raise ValueError(f"threshold must be between 0 and 1, got {threshold}")
+    if not 0.0 <= min_fp_area_ratio <= 1.0:
+        raise ValueError(
+            f"min_fp_area_ratio must be between 0 and 1, got {min_fp_area_ratio}"
+        )
+    if max_images is not None and max_images < 0:
+        raise ValueError(f"max_images must be non-negative, got {max_images}")
+
     manifest_path = resolve_path(manifest_csv, root_dir)
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"Missing full-image manifest: {manifest_path}")
     df = pd.read_csv(manifest_path)
     if max_images is not None:
         df = df.head(max_images)
@@ -191,6 +240,7 @@ def evaluate_full_images(
             patch_size=patch_size,
             stride=stride,
             batch_size=batch_size,
+            merge=merge,
         )
         is_tumor = int(item.tumor) == 1
         metrics = compute_sample_metrics(
@@ -222,8 +272,12 @@ def evaluate_full_images(
             "manifest": str(manifest_path),
             "patch_size": int(patch_size),
             "stride": int(stride),
-            "merge": "average_probability",
+            "overlap_ratio": float(max(0.0, 1.0 - stride / patch_size)),
+            "merge": merge,
+            "padding": "reflect_bottom_right_for_images_smaller_than_patch",
+            "inference_batch_size": int(batch_size),
             "threshold": float(threshold),
+            "post_processing": "none",
             "images": int(len(rows)),
             "avg_windows_per_image": float(sum(row["window_count"] for row in rows) / max(len(rows), 1)),
             "total_inference_seconds": float(elapsed),

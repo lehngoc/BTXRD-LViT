@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import Any
 
 import torch
 from torch.utils.data import DataLoader
@@ -12,12 +11,28 @@ from tqdm import tqdm
 if __package__ is None or __package__ == "":
     sys.path.append(str(Path(__file__).resolve().parents[2]))
 
-from src.data import BTXRDPatchSegmentationDataset
 from src.inference.sliding_window import evaluate_full_images
-from src.models import UNet
 from src.training.losses import BCEDiceLoss
 from src.training.metrics import SegmentationMetricAccumulator
+from src.training.patch_pipeline import (
+    build_patch_dataset,
+    build_patch_loader,
+    build_unet,
+    load_unet_checkpoint,
+)
 from src.training.utils import append_history_row, get_device, load_config, save_json, set_seed
+
+
+FULL_VAL_HISTORY_KEYS = [
+    "tumor_dice",
+    "tumor_iou",
+    "tumor_precision",
+    "tumor_recall",
+    "normal_pred_area_ratio",
+    "normal_fp_image_rate",
+    "avg_windows_per_image",
+    "seconds_per_image",
+]
 
 
 def parse_args() -> argparse.Namespace:
@@ -39,32 +54,6 @@ def parse_args() -> argparse.Namespace:
         help="Resume from output_dir/last.pt if it exists.",
     )
     return parser.parse_args()
-
-
-def build_dataset(
-    data_cfg: dict[str, Any],
-    train_cfg: dict[str, Any],
-    split_name: str,
-    max_samples: int | None,
-) -> BTXRDPatchSegmentationDataset:
-    return BTXRDPatchSegmentationDataset(
-        csv_path=data_cfg[f"{split_name}_csv"],
-        expected_size=train_cfg["image_size"],
-        include_text=True,
-        text_column=train_cfg.get("text_column", "text_lvit_prompt"),
-        max_samples=max_samples,
-        root_dir=data_cfg.get("root_dir", "."),
-    )
-
-
-def build_loader(dataset: BTXRDPatchSegmentationDataset, cfg: dict[str, Any], train: bool) -> DataLoader:
-    return DataLoader(
-        dataset,
-        batch_size=cfg["batch_size"],
-        shuffle=train,
-        num_workers=cfg.get("num_workers", 0),
-        pin_memory=torch.cuda.is_available(),
-    )
 
 
 def run_epoch(
@@ -106,6 +95,19 @@ def run_epoch(
     return output
 
 
+def should_run_full_validation(epoch: int, total_epochs: int, interval: int) -> bool:
+    return interval > 0 and (epoch == 1 or epoch % interval == 0 or epoch == total_epochs)
+
+
+def get_full_val_patience(train_cfg: dict) -> int:
+    return int(
+        train_cfg.get(
+            "full_val_patience",
+            train_cfg.get("early_stopping_patience", 0),
+        )
+    )
+
+
 def main() -> None:
     args = parse_args()
     cfg = load_config(args.config)
@@ -126,16 +128,12 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     save_json(cfg, output_dir / "config.json")
 
-    train_ds = build_dataset(data_cfg, train_cfg, "train", args.max_train_samples)
-    val_ds = build_dataset(data_cfg, train_cfg, "val", args.max_val_samples)
-    train_loader = build_loader(train_ds, train_cfg, train=True)
-    val_loader = build_loader(val_ds, train_cfg, train=False)
+    train_ds = build_patch_dataset(data_cfg, train_cfg, "train", args.max_train_samples)
+    val_ds = build_patch_dataset(data_cfg, train_cfg, "val", args.max_val_samples)
+    train_loader = build_patch_loader(train_ds, train_cfg, device, shuffle=True)
+    val_loader = build_patch_loader(val_ds, train_cfg, device, shuffle=False)
 
-    model = UNet(
-        in_channels=model_cfg.get("in_channels", 3),
-        out_channels=model_cfg.get("out_channels", 1),
-        base_channels=model_cfg.get("base_channels", 32),
-    ).to(device)
+    model = build_unet(model_cfg, device)
     criterion = BCEDiceLoss(
         bce_weight=train_cfg.get("bce_weight", 1.0),
         dice_weight=train_cfg.get("dice_weight", 1.0),
@@ -151,8 +149,8 @@ def main() -> None:
     best_full_val_dice = -1.0
     best_epoch = 0
     start_epoch = 1
-    patience = train_cfg.get("early_stopping_patience", 0)
-    epochs_without_improvement = 0
+    full_val_patience = get_full_val_patience(train_cfg)
+    full_val_checks_without_improvement = 0
     history_path = output_dir / "history.csv"
     full_val_interval = int(train_cfg.get("full_val_interval", 5))
 
@@ -165,13 +163,17 @@ def main() -> None:
     if resume_path is not None:
         if not resume_path.exists():
             raise FileNotFoundError(f"Missing resume checkpoint: {resume_path}")
-        checkpoint = torch.load(resume_path, map_location=device)
-        model.load_state_dict(checkpoint["model_state_dict"])
+        checkpoint = load_unet_checkpoint(model, resume_path, device)
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         start_epoch = int(checkpoint.get("epoch", 0)) + 1
         best_full_val_dice = float(checkpoint.get("best_full_val_dice", -1.0))
         best_epoch = int(checkpoint.get("best_epoch", 0))
-        epochs_without_improvement = int(checkpoint.get("epochs_without_improvement", 0))
+        full_val_checks_without_improvement = int(
+            checkpoint.get(
+                "full_val_checks_without_improvement",
+                checkpoint.get("epochs_without_improvement", 0),
+            )
+        )
         print(
             f"Resumed from {resume_path} at epoch {start_epoch}. "
             f"best_full_val={best_full_val_dice:.4f}@{best_epoch}"
@@ -198,8 +200,10 @@ def main() -> None:
         )
 
         full_val_metrics = None
-        should_run_full_val = full_val_interval > 0 and (
-            epoch == 1 or epoch % full_val_interval == 0 or epoch == train_cfg["epochs"]
+        should_run_full_val = should_run_full_validation(
+            epoch=epoch,
+            total_epochs=train_cfg["epochs"],
+            interval=full_val_interval,
         )
         if should_run_full_val:
             full_val_metrics = evaluate_full_images(
@@ -212,6 +216,7 @@ def main() -> None:
                 batch_size=sw_cfg.get("batch_size", train_cfg["batch_size"]),
                 threshold=metric_cfg.get("threshold", 0.5),
                 min_fp_area_ratio=metric_cfg.get("min_fp_area_ratio", 0.001),
+                merge=sw_cfg.get("merge", "average_probability"),
                 max_images=args.max_full_val_images,
             )
             save_json(full_val_metrics, output_dir / f"val_sliding_epoch_{epoch:03d}.json")
@@ -219,17 +224,7 @@ def main() -> None:
         row = {"epoch": epoch}
         row.update({f"train_{key}": value for key, value in train_metrics.items()})
         row.update({f"patch_val_{key}": value for key, value in val_metrics.items()})
-        full_val_history_keys = [
-            "tumor_dice",
-            "tumor_iou",
-            "tumor_precision",
-            "tumor_recall",
-            "normal_pred_area_ratio",
-            "normal_fp_image_rate",
-            "avg_windows_per_image",
-            "seconds_per_image",
-        ]
-        for key in full_val_history_keys:
+        for key in FULL_VAL_HISTORY_KEYS:
             row[f"full_val_{key}"] = (
                 full_val_metrics[key]
                 if full_val_metrics is not None and key in full_val_metrics
@@ -248,16 +243,16 @@ def main() -> None:
             "full_val_metrics": full_val_metrics,
             "best_full_val_dice": best_full_val_dice,
             "best_epoch": best_epoch,
-            "epochs_without_improvement": epochs_without_improvement,
+            "full_val_checks_without_improvement": full_val_checks_without_improvement,
         }
 
         if improved:
             best_full_val_dice = float(full_val_dice)
             best_epoch = epoch
-            epochs_without_improvement = 0
+            full_val_checks_without_improvement = 0
             checkpoint["best_full_val_dice"] = best_full_val_dice
             checkpoint["best_epoch"] = best_epoch
-            checkpoint["epochs_without_improvement"] = epochs_without_improvement
+            checkpoint["full_val_checks_without_improvement"] = full_val_checks_without_improvement
             torch.save(checkpoint, output_dir / "best.pt")
             save_json(
                 {
@@ -269,8 +264,8 @@ def main() -> None:
                 output_dir / "best_summary.json",
             )
         elif full_val_metrics is not None:
-            epochs_without_improvement += 1
-            checkpoint["epochs_without_improvement"] = epochs_without_improvement
+            full_val_checks_without_improvement += 1
+            checkpoint["full_val_checks_without_improvement"] = full_val_checks_without_improvement
 
         torch.save(checkpoint, output_dir / "last.pt")
 
@@ -290,8 +285,12 @@ def main() -> None:
             f"best_full_val={best_full_val_dice:.4f}@{best_epoch}"
         )
 
-        if patience and epochs_without_improvement >= patience:
-            print(f"Early stopping at epoch {epoch}.")
+        if full_val_patience and full_val_checks_without_improvement >= full_val_patience:
+            print(
+                f"Early stopping at epoch {epoch} after "
+                f"{full_val_checks_without_improvement} full-image validation checks "
+                "without improvement."
+            )
             break
 
 

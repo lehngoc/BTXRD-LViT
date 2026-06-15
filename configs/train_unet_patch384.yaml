@@ -28,9 +28,8 @@ training:
   dice_weight: 1.0
   positive_weight: 20.0
   dice_on_positive_patches_only: true
-  early_stopping_patience: 20
+  full_val_patience: 20
   full_val_interval: 5
-  text_column: text_lvit_prompt
   output_dir: experiments/E2_unet_patch384_preprocessed_pos060
 
 metrics:

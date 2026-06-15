@@ -318,3 +318,71 @@ requirements.txt
 - Cleaned BTXRD + LViT-T
 - Cleaned BTXRD + negative text prompts
 - High-resolution patch-based segmentation
+
+## Phase 3 UNet Patch384 Main Baseline
+
+This baseline trains on sampled `384x384` patches while keeping full images
+split at image level.
+
+The patch size selection, patch-generation procedure, and generated-dataset
+statistics are documented in Vietnamese at
+[`docs/patch_size_384_analysis_vi.md`](docs/patch_size_384_analysis_vi.md).
+
+The dataset is split at image level before patch generation, preventing source
+images and their patches from leaking across train, validation, and test.
+Current Patch384 outputs contain `12,830` patches with a `59.99%` positive
+ratio. Patch size 384 contains `78.91%` of lesion bounding boxes in full and
+`71.18%` with a 20% context allowance.
+
+Generate the three patch splits:
+
+```bash
+scripts/10_generate_patch384_dataset.sh
+```
+
+Reproduce the bounding-box and generated-patch reports:
+
+```bash
+python src/analysis/analyze_lesion_bbox.py --min-component-area 10
+python src/analysis/summarize_patch_dataset.py
+python src/training/smoke_test_patch_pipeline.py --config configs/train_unet_patch384.yaml
+```
+
+Generated reports are written locally to
+`data/processed/reports/lesion_bbox_analysis/` and
+`data/processed/reports/patch384_dataset_analysis/`.
+
+Train the Patch384 baseline:
+
+```bash
+python src/training/train_unet_patch.py --config configs/train_unet_patch384.yaml
+```
+
+During training, patch validation is logged every epoch as a fast proxy. The
+main checkpoint selection metric is full-image validation Dice from
+sliding-window inference on `data/exports/btxrd_preprocessed/val.csv`.
+
+Default full-image validation settings:
+
+```text
+patch_size = 384
+stride = 192
+overlap = 50%
+merge = average_probability
+padding = reflect bottom/right only for images smaller than 384
+inference_batch_size = 4
+threshold = 0.5
+post_processing = none
+full_val_interval = 5
+full_val_patience = 20 validation checks
+```
+
+Evaluate the selected checkpoint with the same sliding-window settings:
+
+```bash
+python src/inference/evaluate_unet_sliding_window.py --config configs/train_unet_patch384.yaml --checkpoint experiments/E2_unet_patch384_preprocessed_pos060/best.pt --split val
+python src/inference/evaluate_unet_sliding_window.py --config configs/train_unet_patch384.yaml --checkpoint experiments/E2_unet_patch384_preprocessed_pos060/best.pt --split test
+```
+
+Use patch-level metrics only for training diagnostics. Report main validation
+and test results from full-image sliding-window evaluation.

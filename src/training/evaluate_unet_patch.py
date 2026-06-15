@@ -5,15 +5,18 @@ import sys
 from pathlib import Path
 
 import torch
-from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 if __package__ is None or __package__ == "":
     sys.path.append(str(Path(__file__).resolve().parents[2]))
 
-from src.data import BTXRDPatchSegmentationDataset
-from src.models import UNet
 from src.training.metrics import SegmentationMetricAccumulator
+from src.training.patch_pipeline import (
+    build_patch_dataset,
+    build_patch_loader,
+    build_unet,
+    load_unet_checkpoint,
+)
 from src.training.utils import get_device, load_config, save_json
 
 
@@ -39,28 +42,11 @@ def main() -> None:
     threshold = args.threshold if args.threshold is not None else metric_cfg.get("threshold", 0.5)
     device = get_device(args.device)
 
-    dataset = BTXRDPatchSegmentationDataset(
-        csv_path=data_cfg[f"{args.split}_csv"],
-        expected_size=train_cfg["image_size"],
-        include_text=True,
-        text_column=train_cfg.get("text_column", "text_lvit_prompt"),
-        root_dir=data_cfg.get("root_dir", "."),
-    )
-    loader = DataLoader(
-        dataset,
-        batch_size=train_cfg["batch_size"],
-        shuffle=False,
-        num_workers=train_cfg.get("num_workers", 0),
-        pin_memory=torch.cuda.is_available(),
-    )
+    dataset = build_patch_dataset(data_cfg, train_cfg, args.split)
+    loader = build_patch_loader(dataset, train_cfg, device, shuffle=False)
 
-    model = UNet(
-        in_channels=model_cfg.get("in_channels", 3),
-        out_channels=model_cfg.get("out_channels", 1),
-        base_channels=model_cfg.get("base_channels", 32),
-    ).to(device)
-    checkpoint = torch.load(args.checkpoint, map_location=device)
-    model.load_state_dict(checkpoint["model_state_dict"])
+    model = build_unet(model_cfg, device)
+    load_unet_checkpoint(model, args.checkpoint, device)
     model.eval()
 
     metrics = SegmentationMetricAccumulator(

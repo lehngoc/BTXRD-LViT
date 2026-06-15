@@ -10,7 +10,7 @@ if __package__ is None or __package__ == "":
     sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from src.inference.sliding_window import evaluate_full_images
-from src.models import UNet
+from src.training.patch_pipeline import build_unet, load_unet_checkpoint
 from src.training.utils import get_device, load_config, save_json
 
 
@@ -40,13 +40,8 @@ def main() -> None:
     sw_cfg = cfg.get("sliding_window", {})
     device = get_device(args.device)
 
-    model = UNet(
-        in_channels=model_cfg.get("in_channels", 3),
-        out_channels=model_cfg.get("out_channels", 1),
-        base_channels=model_cfg.get("base_channels", 32),
-    ).to(device)
-    checkpoint = torch.load(args.checkpoint, map_location=device)
-    model.load_state_dict(checkpoint["model_state_dict"])
+    model = build_unet(model_cfg, device)
+    load_unet_checkpoint(model, args.checkpoint, device)
     model.eval()
 
     manifest_key = f"{args.split}_full_csv"
@@ -61,6 +56,7 @@ def main() -> None:
         batch_size=sw_cfg.get("batch_size", train_cfg["batch_size"]),
         threshold=args.threshold if args.threshold is not None else metric_cfg.get("threshold", 0.5),
         min_fp_area_ratio=metric_cfg.get("min_fp_area_ratio", 0.001),
+        merge=sw_cfg.get("merge", "average_probability"),
         max_images=args.max_images,
         save_pred_dir=args.save_pred_dir,
     )

@@ -54,6 +54,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hard-negatives-per-lesion", type=int, default=3)
     parser.add_argument("--random-negatives-per-image", type=float, default=2.0)
     parser.add_argument(
+        "--large-lesion-grid-stride-ratio",
+        type=float,
+        default=0.5,
+        help="Grid stride for lesions larger than a patch, relative to patch size.",
+    )
+    parser.add_argument(
+        "--max-large-lesion-grid-patches",
+        type=int,
+        default=0,
+        help="Maximum grid patches per large lesion; 0 keeps all grid patches.",
+    )
+    parser.add_argument(
         "--target-positive-ratio",
         type=float,
         default=0.5,
@@ -175,6 +187,8 @@ def jittered_centers(
     patch_size: int,
     jitter_fraction: float,
     positive_crops_per_lesion: int,
+    large_lesion_grid_stride_ratio: float,
+    max_large_lesion_grid_patches: int,
     rng: random.Random,
 ) -> list[tuple[float, float, str]]:
     center_x = float(bbox["center_x"])
@@ -189,16 +203,23 @@ def jittered_centers(
         centers.append((center_x + dx, center_y + dy, "positive_jitter"))
 
     if bbox["bbox_maxside"] > patch_size:
-        step = max(1, patch_size // 2)
+        step = max(1, int(round(patch_size * large_lesion_grid_stride_ratio)))
         x_start = int(bbox["bbox_x"] + patch_size / 2)
         x_end = int(bbox["bbox_x"] + bbox["bbox_w"] - patch_size / 2)
         y_start = int(bbox["bbox_y"] + patch_size / 2)
         y_end = int(bbox["bbox_y"] + bbox["bbox_h"] - patch_size / 2)
         xs = list(range(min(x_start, x_end), max(x_start, x_end) + 1, step)) or [center_x]
         ys = list(range(min(y_start, y_end), max(y_start, y_end) + 1, step)) or [center_y]
-        for y in ys:
-            for x in xs:
-                centers.append((float(x), float(y), "positive_large_lesion_grid"))
+        grid_centers = [(float(x), float(y), "positive_large_lesion_grid") for y in ys for x in xs]
+        if max_large_lesion_grid_patches > 0 and len(grid_centers) > max_large_lesion_grid_patches:
+            selected_indices = np.linspace(
+                0,
+                len(grid_centers) - 1,
+                num=max_large_lesion_grid_patches,
+                dtype=int,
+            )
+            grid_centers = [grid_centers[index] for index in selected_indices]
+        centers.extend(grid_centers)
 
     return centers
 
@@ -268,6 +289,9 @@ def add_record(
 ) -> None:
     patch_path, mask_path = save_patch(image_patch, mask_patch, output_dir, patch_id)
     mask_area = int((mask_patch > 0).sum())
+    proposed_patch_kind = patch_kind
+    if patch_kind.startswith("positive") and mask_area == 0:
+        patch_kind = "empty_positive_proposal"
     bbox_area = int(bbox["bbox_area"]) if bbox is not None else 0
     bbox_covered = bbox_intersection_area(crop_x, crop_y, patch_size, bbox) if bbox is not None else 0
 
@@ -282,6 +306,7 @@ def add_record(
         "tumor": int(row["tumor"]),
         "is_positive": int(mask_area > 0),
         "patch_kind": patch_kind,
+        "proposed_patch_kind": proposed_patch_kind,
         "patch_size": int(patch_size),
         "crop_x": int(crop_x),
         "crop_y": int(crop_y),
@@ -445,6 +470,8 @@ def generate_patches(args: argparse.Namespace) -> tuple[pd.DataFrame, dict[str, 
                 args.patch_size,
                 args.jitter_fraction,
                 args.positive_crops_per_lesion,
+                args.large_lesion_grid_stride_ratio,
+                args.max_large_lesion_grid_patches,
                 rng,
             )
             for crop_index, (center_x, center_y, patch_kind) in enumerate(centers, start=1):
@@ -586,6 +613,8 @@ def generate_patches(args: argparse.Namespace) -> tuple[pd.DataFrame, dict[str, 
         "positive_crops_per_lesion": int(args.positive_crops_per_lesion),
         "hard_negatives_per_lesion": int(args.hard_negatives_per_lesion),
         "random_negatives_per_image": float(args.random_negatives_per_image),
+        "large_lesion_grid_stride_ratio": float(args.large_lesion_grid_stride_ratio),
+        "max_large_lesion_grid_patches": int(args.max_large_lesion_grid_patches),
         "target_positive_ratio": float(args.target_positive_ratio),
         "counters": counters,
         "total_patches": int(len(metadata_df)),
@@ -614,6 +643,10 @@ def main() -> None:
         raise ValueError("--patch-size must be positive")
     if args.jitter_fraction < 0:
         raise ValueError("--jitter-fraction must be non-negative")
+    if args.large_lesion_grid_stride_ratio <= 0:
+        raise ValueError("--large-lesion-grid-stride-ratio must be positive")
+    if args.max_large_lesion_grid_patches < 0:
+        raise ValueError("--max-large-lesion-grid-patches must be non-negative")
     if not 0 < args.target_positive_ratio < 1:
         raise ValueError("--target-positive-ratio must be in (0, 1)")
 
