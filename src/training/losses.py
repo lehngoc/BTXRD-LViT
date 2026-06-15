@@ -68,7 +68,7 @@ class BCEDiceLoss(nn.Module):
 
 
 class LegacyWeightedDiceBCELoss(nn.Module):
-    """Probability-space weighted Dice+BCE loss used for controlled 224x224 comparisons."""
+    """Legacy weighted Dice+BCE loss with AMP-safe logits-space BCE."""
 
     def __init__(
         self,
@@ -85,10 +85,10 @@ class LegacyWeightedDiceBCELoss(nn.Module):
         self.background_weight = background_weight
         self.smooth = smooth
 
-    def _weighted_bce(self, probs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        probs = probs.flatten()
+    def _weighted_bce(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        logits = logits.flatten()
         targets = targets.flatten()
-        loss = F.binary_cross_entropy(probs, targets, reduction="none")
+        loss = F.binary_cross_entropy_with_logits(logits, targets, reduction="none")
         pos = (targets > 0.5).float()
         neg = (targets < 0.5).float()
         pos_count = pos.sum().clamp_min(1e-12)
@@ -120,8 +120,8 @@ class LegacyWeightedDiceBCELoss(nn.Module):
         tumor: torch.Tensor | None = None,
     ) -> torch.Tensor:
         del tumor
-        probs = torch.sigmoid(logits).clamp(min=1e-6, max=1 - 1e-6)
-        bce = self._weighted_bce(probs, targets)
+        bce = self._weighted_bce(logits, targets)
+        probs = torch.sigmoid(logits)
         dice = self._weighted_dice(probs, targets)
 
         return self.bce_weight * bce + self.dice_weight * dice

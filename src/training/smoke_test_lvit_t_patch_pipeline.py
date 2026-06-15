@@ -13,6 +13,7 @@ if __package__ is None or __package__ == "":
 from src.inference.sliding_window import predict_sliding_window
 from src.training.patch_pipeline import build_patch_dataset
 from src.training.train_lvit_t import build_model
+from src.training.train_lvit_tw import build_criterion
 from src.training.utils import load_config
 
 
@@ -60,6 +61,15 @@ def main() -> None:
         logits = model(sample["image"].unsqueeze(0), text=[sample["text"]])
     assert logits.shape == sample["mask"].unsqueeze(0).shape
     assert torch.isfinite(logits).all()
+
+    criterion = build_criterion(smoke_cfg["training"])
+    with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+        loss = criterion(
+            logits,
+            sample["mask"].unsqueeze(0),
+            tumor=sample["is_positive"].unsqueeze(0),
+        )
+    assert torch.isfinite(loss)
 
     image = torch.zeros(384, 384, 3, dtype=torch.uint8).numpy()
     probability, window_count = predict_sliding_window(
