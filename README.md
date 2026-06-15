@@ -1,322 +1,189 @@
 # BTXRD-LViT
 
-BTXRD preprocessing workspace for building a clean X-ray segmentation dataset and preparing text-conditioned training manifests for LViT-style experiments.
+Clean BTXRD segmentation workspace for the E2/E3 LViT 224x224 phase.
 
-## Motivation
-
-The original LViT pipeline resizes medical images to a fixed low resolution, which may discard fine-grained clinical details in high-resolution X-ray radiographs. BTXRD provides high-resolution bone tumor radiographs, expert segmentation masks, bounding boxes, and structured metadata.
-
-This repository currently focuses on cleaning the BTXRD dataset, generating text prompts from metadata, creating reproducible splits, and exporting training CSVs before model training.
-
-## BTXRD Data Pipeline Status
-
-Completed pipeline pieces:
-
-1. Audited the raw BTXRD metadata, image files, and annotation files.
-2. Converted LabelMe polygon annotations to binary segmentation masks.
-3. Generated visual mask previews for manual quality control.
-4. Cropped low-information X-ray borders, including black, white, and gray frame artifacts.
-5. Removed safe L/R marker artifacts and isolated bright marker blobs while preserving tumor masks.
-6. Validated that preprocessed image and mask sizes match and that tumor mask pixels are preserved.
-7. Generated text annotations from structured metadata, including LViT-style prompts, short prompts, anatomy-aware prompts, segmentation target text, and negative prompts for normal cases.
-8. Created reproducible train/validation/test splits with seed 42.
-9. Exported training manifests for all/train/val/test rows.
-
-Current local export summary:
+This branch intentionally keeps the active code focused on:
 
 ```text
-total rows: 3746
-train/val/test: 2622 / 562 / 562
-normal/tumor: 1879 / 1867
-benign/malignant: 1525 / 342
-missing preprocessed images: 0
-missing preprocessed masks: 0
+E2 = LViT-TW no-text on preprocessed BTXRD 224x224
+E3 = LViT-T with text_lvit_prompt on preprocessed BTXRD 224x224
 ```
 
-## Current Preprocessing Pipeline
+The completed UNet phase is documented, but its training code, configs, and notebooks are not active in this branch.
 
-Run the full BTXRD data-cleaning and export pipeline on Windows:
+## Current Branch Scope
 
-```bat
-scripts\01_prepare_btxrd.bat
-```
-
-Equivalent command sequence:
-
-```bash
-python src/preprocessing/audit_btxrd_dataset.py
-python src/preprocessing/convert_labelme_to_mask.py
-python src/preprocessing/visualize_masks.py
-python src/preprocessing/preprocess_btxrd_data.py --clean-output
-python src/preprocessing/validate_preprocessed_data.py
-python src/preprocessing/visualize_preprocessed_data.py
-python src/preprocessing/generate_text_annotations.py
-python src/preprocessing/make_splits.py
-python src/export/export_training_dataset.py
-```
-
-The Unix helper currently runs the preprocessing/visualization steps only:
-
-```bash
-scripts/01_prepare_btxrd.sh
-```
-
-Final generated outputs are written locally to:
+This branch answers Q2:
 
 ```text
-data/processed/masks/
-data/processed/images_preprocessed/
-data/processed/masks_preprocessed/
-data/processed/text_annotations.csv
-data/processed/splits/
-data/processed/reports/
-data/processed/visual_checks/
-data/exports/btxrd_preprocessed/
+Does text_lvit_prompt help LViT compared with the no-text LViT baseline?
 ```
 
-## E1 UNet Baseline Pipeline
-
-The first model pipeline is a clean image-only UNet baseline on preprocessed BTXRD resized to `224x224`.
-
-Smoke test the dataset, mask loading, UNet forward pass, and backward pass:
-
-```bash
-python src/training/smoke_test_model_pipeline.py --config configs/train_unet_baseline.yaml
-```
-
-Train the baseline:
-
-```bash
-python src/training/train_unet.py --config configs/train_unet_baseline.yaml
-```
-
-Or on Windows:
-
-```bat
-scripts\02_train_unet_baseline.bat
-```
-
-Evaluate the best checkpoint on the test split:
-
-```bash
-python src/training/evaluate_unet.py \
-  --config configs/train_unet_baseline.yaml \
-  --checkpoint experiments/E1_unet_preprocessed_224_weighted_loss/best.pt \
-  --split test
-```
-
-The UNet pipeline reads:
+Controlled setup:
 
 ```text
-data/exports/btxrd_preprocessed/train.csv
-data/exports/btxrd_preprocessed/val.csv
-data/exports/btxrd_preprocessed/test.csv
+data = preprocessed BTXRD
+split = seed42
+resize = 224x224
+train = tumor_only=true
+eval = full test tumor+normal
+threshold sweep = 0.3, 0.4, 0.5, 0.6, 0.7
 ```
 
-Training outputs are written to:
+The main E2/E3 configs use `transformer_heads: 4` to match the original LViT config. Earlier H8 runs can be kept as exploratory artifacts, but the H4 runs are the closer-to-original baseline.
+
+The only intended experiment difference is:
 
 ```text
-experiments/E1_unet_preprocessed_224_weighted_loss/
-  config.json
-  history.csv
+E2: no text
+E3: text_lvit_prompt
+```
+
+Model-port policy:
+
+```text
+Architecture: port the original LViT Double-U CNN/ViT design as closely as practical.
+Text encoder: use HuggingFace BERT as a maintained replacement for the original bert_embedding dependency.
+Text interface: preserve the original [B, 10, 768] tensor shape.
+Output API: return raw logits; BTXRD losses/metrics apply sigmoid centrally.
+Training/eval: keep the BTXRD protocol for fair E1as/E2/E3 comparison.
+```
+
+## Completed Previous Work
+
+The data pipeline and UNet phase are frozen in docs:
+
+```text
+docs/dataset_pipeline.md
+docs/experiments/unet_phase_summary.md
+docs/experiments/e2e3_lvit_224_plan.md
+```
+
+Final UNet baseline:
+
+```text
+E1as_strong_preprocessed_tumor_only
+threshold = 0.6
+tumor_dice = 0.5612
+normal_fp_image_rate = 0.3156
+normal_pred_area_ratio = 0.00331
+```
+
+E1bs strong normal-aware is kept as an ablation in the docs, not as the final UNet.
+
+## Run E2
+
+Local smoke test:
+
+```bash
+python -m src.training.train_lvit_tw \
+  --config configs/train_lvit_tw_preprocessed_224.yaml \
+  --epochs 1 \
+  --max-train-samples 4 \
+  --max-val-samples 4 \
+  --max-test-samples 4
+```
+
+Full run:
+
+```bash
+python -m src.training.train_lvit_tw \
+  --config configs/train_lvit_tw_preprocessed_224.yaml
+```
+
+Kaggle runner:
+
+```text
+notebooks/E2_lvit_tw_preprocessed_224_kaggle.ipynb
+```
+
+## Run E3
+
+E3 requires HuggingFace `transformers` for the default BERT text encoder:
+
+```bash
+pip install -r requirements.txt
+```
+
+Local smoke test:
+
+```bash
+python -m src.training.train_lvit_t \
+  --config configs/train_lvit_t_preprocessed_224.yaml \
+  --epochs 1 \
+  --max-train-samples 4 \
+  --max-val-samples 4 \
+  --max-test-samples 4
+```
+
+Full run:
+
+```bash
+python -m src.training.train_lvit_t \
+  --config configs/train_lvit_t_preprocessed_224.yaml
+```
+
+Kaggle runner:
+
+```text
+notebooks/E3_lvit_t_preprocessed_224_kaggle.ipynb
+```
+
+## Outputs
+
+Both E2 and E3 write the same artifact schema:
+
+```text
+experiments/<run_name>/
   best.pt
   last.pt
+  history.csv
   best_summary.json
+  val_metrics.json
   test_metrics.json
+  test_metrics_thr30.json
+  test_metrics_thr40.json
+  test_metrics_thr50.json
+  test_metrics_thr60.json
+  test_metrics_thr70.json
+  test_threshold_sweep_metrics.json
+  config.json
 ```
 
-Metrics are reported separately for all cases, tumor cases, and normal cases. Normal-case metrics include predicted mask area ratio and false-positive image rate.
+## Repository Shape
 
-The current E1 config uses `positive_weight: 20.0` for BCE and computes DiceLoss on tumor samples only. This keeps normal cases in training for false-positive control while preventing empty-mask normal cases from dominating the Dice objective.
-
-E1 is split into two UNet baselines:
+Active LViT files:
 
 ```text
-E1a: preprocessed 224x224 tumor-only UNet
-E1b: preprocessed 224x224 normal-aware UNet
+configs/train_lvit_tw_preprocessed_224.yaml
+configs/train_lvit_t_preprocessed_224.yaml
+notebooks/E2_lvit_tw_preprocessed_224_kaggle.ipynb
+notebooks/E3_lvit_t_preprocessed_224_kaggle.ipynb
+src/models/lvit_tw.py
+src/models/lvit_t.py
+src/training/train_lvit_tw.py
+src/training/train_lvit_t.py
 ```
 
-Use E1a to compare segmentation behavior against the historical tumor-only E0 run. Use E1b to study normal false positives.
-
-For normal cases, use `normal_pred_area_ratio` and `normal_fp_image_rate` as the main false-positive metrics. `normal_precision` and `normal_recall` are logged for completeness, but they are not very interpretable when the ground-truth mask is empty.
-
-The dataset reader normalizes Windows-style paths from exported CSV files, so manifests containing paths such as `data\processed\images_preprocessed\IMG000001.jpg` can also run on Linux/Kaggle. Set `data.root_dir` in the config when the dataset root is not the repository root.
-
-For 50% label experiments, note that the current `label_fraction < 1` behavior keeps all normal cases and samples tumor cases only. Treat this as a tumor-labeled fraction setup, not as a 50% sample of the entire train split.
-
-### Kaggle GPU T4 Notebook
-
-Use this notebook for the full E1 run on Kaggle instead of training on local CPU:
+Shared infrastructure:
 
 ```text
-notebooks/E1b_unet_normal_aware_224_kaggle.ipynb
-```
-
-Kaggle setup:
-
-1. Enable GPU T4 in Notebook Settings.
-2. Attach a Kaggle Dataset containing `data/exports/btxrd_preprocessed/`, `data/processed/images_preprocessed/`, and `data/processed/masks_preprocessed/`.
-3. Make the repo available under `/kaggle/working/BTXRD-LViT`, or edit `REPO_ROOT` in the notebook.
-4. If auto-detection cannot find the attached data, edit `DATA_ROOT` in the notebook.
-5. Run the notebook cells in order: smoke test, train, evaluate `val` and `test`, then zip artifacts.
-
-Kaggle outputs are written to:
-
-```text
-/kaggle/working/experiments/E1_unet_preprocessed_224_weighted_loss/
-/kaggle/working/E1_unet_preprocessed_224_weighted_loss_artifacts.zip
-```
-
-For E1a tumor-only training on Kaggle, use:
-
-```text
-notebooks/E1a_unet_tumor_only_224_kaggle.ipynb
-```
-
-For E1b normal-aware training on Kaggle, use:
-
-```text
-notebooks/E1b_unet_normal_aware_224_kaggle.ipynb
-```
-
-E1a writes metrics-only artifacts to:
-
-```text
-/kaggle/working/experiments/E1a_unet_preprocessed_224_tumor_only/
-/kaggle/working/E1a_unet_tumor_only_metrics_only.zip
-```
-
-To visualize UNet predictions from a checkpoint:
-
-```bash
-python src/training/visualize_unet_predictions.py \
-  --config configs/train_unet_baseline.yaml \
-  --checkpoint experiments/E1_unet_preprocessed_224_weighted_loss/best.pt \
-  --split val
-```
-
-## Git Tracking Notes
-
-Version these files because they define reproducible preprocessing behavior:
-
-```text
+src/data/btxrd_dataset.py
+src/training/losses.py
+src/training/metrics.py
+src/training/utils.py
+src/preprocessing/
+src/export/
 configs/preprocess.yaml
 configs/splits/btxrd_split_seed42.csv
-docs/
-scripts/
-src/
-README.md
-requirements.txt
-data/processed/reports/btxrd_audit_details.csv
-data/processed/reports/btxrd_audit_summary.json
-data/processed/reports/mask_conversion_report.csv
-data/**/.gitkeep
 ```
 
-Keep these local, or publish them through dataset/artifact storage instead of normal Git:
+Deferred work:
 
-```text
-data/raw/images/
-data/raw/Annotations/
-data/processed/images_preprocessed/
-data/processed/masks/
-data/processed/masks_preprocessed/
-data/processed/splits/
-data/processed/text_annotations.csv
-data/processed/visual_checks/
-data/processed/reports/*generated_after_full_pipeline*
-data/exports/btxrd_preprocessed/
-experiments/
-logs/
-runs/
-wandb/
-*.pth
-*.pt
-*.ckpt
-```
-
-Note: `data/raw/dataset.csv` is currently tracked in Git even though `.gitignore` ignores new `data/raw/*.csv` files. Keep it tracked only if the metadata is allowed to be public and is needed for reproducibility.
-
-## Repository Structure
-
-```text
-configs/
-  preprocess.yaml
-  train_unet_baseline.yaml
-  train_unet_tumor_only.yaml
-  splits/
-    btxrd_split_seed42.csv
-data/
-  exports/
-    .gitkeep
-    btxrd_preprocessed/        # local generated training manifests
-  processed/
-    masks/                     # local generated LabelMe masks
-    reports/                   # versioned audit reports plus local generated reports
-    splits/                    # local generated split CSVs
-    images_preprocessed/       # local generated cleaned images
-    masks_preprocessed/        # local generated cleaned masks
-    text_annotations.csv       # local generated text prompts
-    visual_checks/             # local QC previews
-  raw/
-    Annotations/               # local raw LabelMe annotations
-    images/                    # local raw X-ray images
-    dataset.csv                # tracked metadata CSV
-docs/
-  dataset_pipeline.md
-notebooks/
-  E1a_unet_tumor_only_224_kaggle.ipynb
-  E1b_unet_normal_aware_224_kaggle.ipynb
-scripts/
-  01_prepare_btxrd.bat
-  01_prepare_btxrd.sh
-  02_train_unet_baseline.bat
-  02_train_unet_baseline.sh
-  03_evaluate_unet_baseline.bat
-  03_evaluate_unet_baseline.sh
-  04_train_unet_tumor_only.bat
-  04_train_unet_tumor_only.sh
-  05_evaluate_unet_tumor_only.bat
-  05_evaluate_unet_tumor_only.sh
-src/
-  export/
-    export_training_dataset.py
-  data/
-    btxrd_dataset.py
-  models/
-    unet.py
-  preprocessing/
-    audit_btxrd_dataset.py
-    convert_labelme_to_mask.py
-    crop_xray_border.py
-    generate_text_annotations.py
-    make_splits.py
-    preprocess_btxrd_data.py
-    remove_xray_markers.py
-    validate_preprocessed_data.py
-    visualize_masks.py
-    visualize_preprocessed_data.py
-  training/
-    evaluate_unet.py
-    losses.py
-    metrics.py
-    smoke_test_model_pipeline.py
-    train_unet.py
-    utils.py
-    visualize_unet_predictions.py
-.gitignore
-README.md
-requirements.txt
-```
-
-## Planned Experiments
-
-- Raw BTXRD + UNet baseline
-- Raw BTXRD + LViT-TW
-- Raw BTXRD + LViT-T
-- Cleaned BTXRD + LViT-TW
-- Cleaned BTXRD + LViT-T
-- Cleaned BTXRD + negative text prompts
+- E2-50 / E3-50
+- Raw LViT
+- Normal-aware LViT
+- Negative-prompt ablations
 - High-resolution patch-based segmentation
 
 ## Phase 3 UNet Patch384 Main Baseline

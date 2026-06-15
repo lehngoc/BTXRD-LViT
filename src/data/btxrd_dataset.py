@@ -38,6 +38,8 @@ class BTXRDSegmentationDataset(Dataset):
         label_fraction: float = 1.0,
         label_seed: int = 42,
         tumor_only: bool = False,
+        augment: bool = False,
+        legacy_augment: bool = False,
         root_dir: str | Path = ".",
     ) -> None:
         self.root_dir = Path(root_dir)
@@ -47,6 +49,8 @@ class BTXRDSegmentationDataset(Dataset):
         self.image_std = torch.tensor(image_std, dtype=torch.float32).view(3, 1, 1)
         self.text_column = text_column
         self.include_text = include_text
+        self.augment = augment
+        self.legacy_augment = legacy_augment
 
         if not self.csv_path.exists():
             raise FileNotFoundError(f"Missing dataset CSV: {self.csv_path}")
@@ -118,8 +122,7 @@ class BTXRDSegmentationDataset(Dataset):
     def __getitem__(self, index: int) -> dict[str, Any]:
         row = self.df.iloc[index]
 
-        image = self._load_image(row["image_path"])
-        mask = self._load_mask(row["mask_path"])
+        image, mask = self._load_image_mask(row["image_path"], row["mask_path"])
 
         sample: dict[str, Any] = {
             "image": image,
@@ -141,6 +144,60 @@ class BTXRDSegmentationDataset(Dataset):
             return path
 
         return self.root_dir / path
+
+    def _augment_pair(self, image: Image.Image, mask: Image.Image) -> tuple[Image.Image, Image.Image]:
+        if not self.augment:
+            return image, mask
+
+        if self.legacy_augment and np.random.random() > 0.5:
+            rotate_ops = [
+                None,
+                Image.Transpose.ROTATE_90,
+                Image.Transpose.ROTATE_180,
+                Image.Transpose.ROTATE_270,
+            ]
+            op = rotate_ops[int(np.random.randint(0, len(rotate_ops)))]
+            if op is not None:
+                image = image.transpose(op)
+                mask = mask.transpose(op)
+
+            flip_op = Image.Transpose.FLIP_LEFT_RIGHT if np.random.randint(0, 2) == 0 else Image.Transpose.FLIP_TOP_BOTTOM
+            image = image.transpose(flip_op)
+            mask = mask.transpose(flip_op)
+            return image, mask
+
+        if self.legacy_augment and np.random.random() > 0.5:
+            angle = float(np.random.randint(-20, 20))
+            image = image.rotate(angle, resample=Image.Resampling.BILINEAR, fillcolor=0)
+            mask = mask.rotate(angle, resample=Image.Resampling.NEAREST, fillcolor=0)
+
+        return image, mask
+
+    def _load_image_mask(self, image_path_value: str | Path, mask_path_value: str | Path) -> tuple[torch.Tensor, torch.Tensor]:
+        image_path = self._resolve_path(image_path_value)
+        mask_path = self._resolve_path(mask_path_value)
+
+        if not image_path.exists():
+            raise FileNotFoundError(f"Missing image file: {image_path}")
+        if not mask_path.exists():
+            raise FileNotFoundError(f"Missing mask file: {mask_path}")
+
+        image = Image.open(image_path).convert("RGB")
+        mask = Image.open(mask_path).convert("L")
+        image, mask = self._augment_pair(image, mask)
+
+        height, width = self.image_size
+        image = image.resize((width, height), resample=Image.Resampling.BILINEAR)
+        mask = mask.resize((width, height), resample=Image.Resampling.NEAREST)
+
+        image_np = np.asarray(image, dtype=np.float32) / 255.0
+        image_tensor = torch.from_numpy(image_np).permute(2, 0, 1)
+
+        mask_np = np.asarray(mask, dtype=np.uint8)
+        mask_np = (mask_np > 0).astype(np.float32)
+        mask_tensor = torch.from_numpy(mask_np).unsqueeze(0)
+
+        return (image_tensor - self.image_mean) / self.image_std, mask_tensor
 
     def _load_image(self, path_value: str | Path) -> torch.Tensor:
         path = self._resolve_path(path_value)
