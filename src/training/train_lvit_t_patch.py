@@ -48,8 +48,10 @@ def run_patch_epoch(
     accumulation_steps: int = 1,
     scaler: torch.amp.GradScaler | None = None,
     mixed_precision: bool = False,
+    gradient_clip_norm: float | None = None,
     threshold: float = 0.5,
     min_fp_area_ratio: float = 0.001,
+    phase: str = "train",
 ) -> dict[str, float]:
     train = optimizer is not None
     model.train(train)
@@ -71,6 +73,14 @@ def run_patch_epoch(
                 logits = model(images, text=list(batch["text"]))
                 loss = criterion(logits, masks, tumor=is_positive)
 
+            if not torch.isfinite(logits).all() or not torch.isfinite(loss):
+                patch_ids = [str(value) for value in batch.get("patch_id", [])]
+                shown_patch_ids = ", ".join(patch_ids[:4]) if patch_ids else "unknown"
+                raise RuntimeError(
+                    f"Non-finite {phase} output at step {step}: "
+                    f"loss={float(loss.detach().cpu())}, patch_id={shown_patch_ids}"
+                )
+
             if train:
                 scaled_loss = loss / accumulation_steps
                 if scaler is not None:
@@ -78,6 +88,10 @@ def run_patch_epoch(
                 else:
                     scaled_loss.backward()
                 if step % accumulation_steps == 0 or step == len(loader):
+                    if gradient_clip_norm is not None and gradient_clip_norm > 0:
+                        if scaler is not None:
+                            scaler.unscale_(optimizer)
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clip_norm)
                     if scaler is not None:
                         scaler.step(optimizer)
                         scaler.update()
@@ -170,8 +184,10 @@ def main() -> None:
             accumulation_steps=train_cfg.get("accumulation_steps", 1),
             scaler=scaler if scaler.is_enabled() else None,
             mixed_precision=mixed_precision,
+            gradient_clip_norm=train_cfg.get("gradient_clip_norm"),
             threshold=metric_cfg.get("threshold", 0.5),
             min_fp_area_ratio=metric_cfg.get("min_fp_area_ratio", 0.001),
+            phase="train",
         )
         val_metrics = run_patch_epoch(
             model,
@@ -181,6 +197,7 @@ def main() -> None:
             mixed_precision=mixed_precision,
             threshold=metric_cfg.get("threshold", 0.5),
             min_fp_area_ratio=metric_cfg.get("min_fp_area_ratio", 0.001),
+            phase="val",
         )
         if scheduler is not None:
             scheduler.step()

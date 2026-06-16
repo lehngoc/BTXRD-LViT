@@ -282,7 +282,9 @@ patch_size = 384
 stride = 192
 training_batch_size = 1
 gradient_accumulation_steps = 4
-mixed_precision = true
+mixed_precision = false
+learning_rate = 1e-4
+gradient_clip_norm = 1.0
 sliding_window_batch_size = 1
 merge = average_probability
 ```
