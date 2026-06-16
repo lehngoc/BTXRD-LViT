@@ -41,6 +41,7 @@ training:
   weight_decay: 0.0
   optimizer: adam
   gradient_clip_norm: 1.0
+  finite_check_interval: 0
   loss_type: legacy_weighted_dice_bce
   bce_weight: 0.5
   dice_weight: 0.5

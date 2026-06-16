@@ -49,6 +49,7 @@ def run_patch_epoch(
     scaler: torch.amp.GradScaler | None = None,
     mixed_precision: bool = False,
     gradient_clip_norm: float | None = None,
+    finite_check_interval: int = 1,
     threshold: float = 0.5,
     min_fp_area_ratio: float = 0.001,
     phase: str = "train",
@@ -59,6 +60,7 @@ def run_patch_epoch(
     total_loss = 0.0
     total_samples = 0
     accumulation_steps = max(int(accumulation_steps), 1)
+    finite_check_interval = max(int(finite_check_interval), 0)
 
     if train:
         optimizer.zero_grad(set_to_none=True)
@@ -73,7 +75,11 @@ def run_patch_epoch(
                 logits = model(images, text=list(batch["text"]))
                 loss = criterion(logits, masks, tumor=is_positive)
 
-            if not torch.isfinite(logits).all() or not torch.isfinite(loss):
+            check_finite = finite_check_interval > 0
+            check_logits = check_finite and step % finite_check_interval == 0
+            non_finite_loss = check_finite and not torch.isfinite(loss)
+            non_finite_logits = check_logits and not torch.isfinite(logits).all()
+            if non_finite_loss or non_finite_logits:
                 patch_ids = [str(value) for value in batch.get("patch_id", [])]
                 shown_patch_ids = ", ".join(patch_ids[:4]) if patch_ids else "unknown"
                 raise RuntimeError(
@@ -185,6 +191,7 @@ def main() -> None:
             scaler=scaler if scaler.is_enabled() else None,
             mixed_precision=mixed_precision,
             gradient_clip_norm=train_cfg.get("gradient_clip_norm"),
+            finite_check_interval=train_cfg.get("finite_check_interval", 1),
             threshold=metric_cfg.get("threshold", 0.5),
             min_fp_area_ratio=metric_cfg.get("min_fp_area_ratio", 0.001),
             phase="train",
@@ -195,6 +202,7 @@ def main() -> None:
             criterion,
             device,
             mixed_precision=mixed_precision,
+            finite_check_interval=train_cfg.get("finite_check_interval", 1),
             threshold=metric_cfg.get("threshold", 0.5),
             min_fp_area_ratio=metric_cfg.get("min_fp_area_ratio", 0.001),
             phase="val",
