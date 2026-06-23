@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -28,6 +29,26 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def selected_threshold_from_summary(checkpoint: str | Path) -> float | None:
+    summary_path = Path(checkpoint).parent / "best_summary.json"
+    if not summary_path.exists():
+        return None
+    with summary_path.open("r", encoding="utf-8") as f:
+        summary = json.load(f)
+    threshold = summary.get("selected_threshold")
+    return float(threshold) if threshold is not None else None
+
+
+def resolve_threshold(checkpoint: str | Path, configured_threshold: float, manual_threshold: float | None) -> tuple[float, str]:
+    """Resolve threshold from a CLI override, then the checkpoint's run folder."""
+    if manual_threshold is not None:
+        return manual_threshold, "command-line override"
+    saved_threshold = selected_threshold_from_summary(checkpoint)
+    if saved_threshold is not None:
+        return saved_threshold, "best_summary.json"
+    return configured_threshold, "config default"
+
+
 @torch.no_grad()
 def main() -> None:
     args = parse_args()
@@ -36,7 +57,11 @@ def main() -> None:
     data_cfg = cfg["data"]
     model_cfg = cfg["model"]
     metric_cfg = cfg.get("metrics", {})
-    threshold = args.threshold if args.threshold is not None else metric_cfg.get("threshold", 0.5)
+    threshold, threshold_source = resolve_threshold(
+        args.checkpoint,
+        configured_threshold=metric_cfg.get("threshold", 0.5),
+        manual_threshold=args.threshold,
+    )
 
     device = get_device(args.device)
     dataset = BTXRDSegmentationDataset(
@@ -83,6 +108,7 @@ def main() -> None:
     result["split"] = args.split
     result["checkpoint"] = str(args.checkpoint)
     result["threshold"] = threshold
+    result["threshold_source"] = threshold_source
 
     output_path = Path(args.output) if args.output else Path(args.checkpoint).parent / f"{args.split}_metrics.json"
     save_json(result, output_path)

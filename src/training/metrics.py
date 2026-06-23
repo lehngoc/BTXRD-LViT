@@ -46,7 +46,7 @@ class SegmentationMetricAccumulator:
         precision = (tp + self.eps) / (tp + fp + self.eps)
         recall = (tp + self.eps) / (tp + fn + self.eps)
         pred_area_ratio = pred_area / total_pixels
-        fp_image = 0.0 if is_tumor else float(pred_area_ratio >= self.min_fp_area_ratio)
+        fp_image = 0.0 if is_tumor else float(pred_area_ratio > self.min_fp_area_ratio)
 
         return {
             "dice": dice,

@@ -14,6 +14,7 @@ if __package__ is None or __package__ == "":
     sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from src.data import BTXRDSegmentationDataset
+from src.training.evaluate_unet import selected_threshold_from_summary
 from src.models import UNet
 from src.training.utils import get_device, load_config
 
@@ -105,7 +106,10 @@ def main() -> None:
     data_cfg = cfg["data"]
     model_cfg = cfg["model"]
     metric_cfg = cfg.get("metrics", {})
-    threshold = args.threshold if args.threshold is not None else metric_cfg.get("threshold", 0.5)
+    saved_threshold = selected_threshold_from_summary(args.checkpoint)
+    threshold = args.threshold if args.threshold is not None else (
+        saved_threshold if saved_threshold is not None else metric_cfg.get("threshold", 0.5)
+    )
     output_dir = Path(args.output_dir) if args.output_dir else Path(args.checkpoint).parent / "visual_checks"
 
     device = get_device(args.device)

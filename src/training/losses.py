@@ -10,7 +10,14 @@ class DiceLoss(nn.Module):
         super().__init__()
         self.smooth = smooth
 
-    def forward(self, logits: torch.Tensor, targets: torch.Tensor, sample_mask: torch.Tensor | None = None) -> torch.Tensor:
+    def forward(
+        self,
+        logits: torch.Tensor,
+        targets: torch.Tensor,
+        tumor: torch.Tensor | None = None,
+        sample_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        del tumor
         probs = torch.sigmoid(logits)
         probs = probs.flatten(start_dim=1)
         targets = targets.flatten(start_dim=1)
@@ -65,6 +72,84 @@ class BCEDiceLoss(nn.Module):
         dice_loss = self.dice(logits, targets, sample_mask=dice_sample_mask)
 
         return self.bce_weight * bce_loss + self.dice_weight * dice_loss
+
+
+class FocalBCEDiceLoss(nn.Module):
+    """Focal BCE plus Dice computed directly from logits.
+
+    ``alpha_positive`` weights foreground pixels; background pixels receive
+    ``1 - alpha_positive``.  The ablation uses 0.25 to emphasize background
+    errors and therefore false positives on normal images.
+    """
+
+    def __init__(
+        self,
+        focal_weight: float = 0.5,
+        dice_weight: float = 0.5,
+        gamma: float = 2.0,
+        alpha_positive: float = 0.25,
+    ) -> None:
+        super().__init__()
+        if gamma < 0:
+            raise ValueError("gamma must be non-negative")
+        if not 0 <= alpha_positive <= 1:
+            raise ValueError("alpha_positive must be in [0, 1]")
+        self.focal_weight = focal_weight
+        self.dice_weight = dice_weight
+        self.gamma = gamma
+        self.alpha_positive = alpha_positive
+        self.dice = DiceLoss()
+
+    def forward(
+        self,
+        logits: torch.Tensor,
+        targets: torch.Tensor,
+        tumor: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        targets = targets.float()
+        bce = F.binary_cross_entropy_with_logits(logits, targets, reduction="none")
+        probs = torch.sigmoid(logits)
+        p_t = probs * targets + (1 - probs) * (1 - targets)
+        alpha_t = self.alpha_positive * targets + (1 - self.alpha_positive) * (1 - targets)
+        focal_bce = (alpha_t * (1 - p_t).pow(self.gamma) * bce).mean()
+        dice_loss = self.dice(logits, targets, tumor=tumor)
+        return self.focal_weight * focal_bce + self.dice_weight * dice_loss
+
+
+class TverskyLoss(nn.Module):
+    """Tversky loss where ``alpha_fp`` explicitly weights false positives.
+
+    The score is ``TP / (TP + alpha_fp * FP + beta_fn * FN)``.  Giving
+    ``alpha_fp`` a larger value makes the model more conservative on normal
+    images, which is the behavior investigated by this ablation.
+    """
+
+    def __init__(self, alpha_fp: float = 0.7, beta_fn: float = 0.3, smooth: float = 1.0) -> None:
+        super().__init__()
+        if alpha_fp < 0 or beta_fn < 0:
+            raise ValueError("alpha_fp and beta_fn must be non-negative")
+        if smooth <= 0:
+            raise ValueError("smooth must be positive")
+        self.alpha_fp = alpha_fp
+        self.beta_fn = beta_fn
+        self.smooth = smooth
+
+    def forward(
+        self,
+        logits: torch.Tensor,
+        targets: torch.Tensor,
+        tumor: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        del tumor
+        probs = torch.sigmoid(logits).flatten(start_dim=1)
+        targets = targets.float().flatten(start_dim=1)
+        true_positive = (probs * targets).sum(dim=1)
+        false_positive = (probs * (1 - targets)).sum(dim=1)
+        false_negative = ((1 - probs) * targets).sum(dim=1)
+        score = (true_positive + self.smooth) / (
+            true_positive + self.alpha_fp * false_positive + self.beta_fn * false_negative + self.smooth
+        )
+        return (1 - score).mean()
 
 
 class LegacyWeightedDiceBCELoss(nn.Module):

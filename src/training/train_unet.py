@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
@@ -14,8 +15,9 @@ if __package__ is None or __package__ == "":
 
 from src.data import BTXRDSegmentationDataset
 from src.models import UNet
-from src.training.losses import BCEDiceLoss, LegacyWeightedDiceBCELoss
+from src.training.losses import BCEDiceLoss, DiceLoss, FocalBCEDiceLoss, LegacyWeightedDiceBCELoss, TverskyLoss
 from src.training.metrics import SegmentationMetricAccumulator
+from src.training.selection import select_normal_aware
 from src.training.utils import append_history_row, get_device, load_config, save_json, set_seed
 
 
@@ -26,6 +28,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-train-samples", type=int, default=None)
     parser.add_argument("--max-val-samples", type=int, default=None)
     parser.add_argument("--device", default=None)
+    parser.add_argument("--seed", type=int, default=None, help="Override the config seed for a reproducible run.")
+    parser.add_argument("--output-dir", default=None, help="Override the config output directory (for example, per seed).")
+    parser.add_argument("--overwrite", action="store_true", help="Delete a non-empty output directory before training.")
     return parser.parse_args()
 
 
@@ -105,6 +110,47 @@ def run_epoch(
     return output
 
 
+@torch.no_grad()
+def run_validation_threshold_sweep(
+    model: torch.nn.Module,
+    loader: DataLoader,
+    criterion: torch.nn.Module,
+    device: torch.device,
+    thresholds: list[float],
+    min_fp_area_ratio: float,
+) -> list[dict[str, float]]:
+    """Evaluate all thresholds in a single validation forward pass."""
+    model.eval()
+    accumulators = {
+        threshold: SegmentationMetricAccumulator(threshold=threshold, min_fp_area_ratio=min_fp_area_ratio)
+        for threshold in thresholds
+    }
+    total_loss = 0.0
+    total_samples = 0
+
+    for batch in tqdm(loader, leave=False):
+        images = batch["image"].to(device)
+        masks = batch["mask"].to(device)
+        tumor = batch["tumor"].to(device)
+        logits = model(images)
+        loss = criterion(logits, masks, tumor=tumor)
+
+        batch_size = images.shape[0]
+        total_loss += float(loss.item()) * batch_size
+        total_samples += batch_size
+        for accumulator in accumulators.values():
+            accumulator.update(logits, masks, tumor)
+
+    mean_loss = total_loss / max(total_samples, 1)
+    rows: list[dict[str, float]] = []
+    for threshold, accumulator in accumulators.items():
+        row = accumulator.compute()
+        row["threshold"] = threshold
+        row["loss"] = mean_loss
+        rows.append(row)
+    return rows
+
+
 def build_criterion(train_cfg: dict[str, Any]) -> torch.nn.Module:
     loss_type = train_cfg.get("loss_type", "bce_dice")
 
@@ -122,6 +168,24 @@ def build_criterion(train_cfg: dict[str, Any]) -> torch.nn.Module:
             dice_weight=train_cfg.get("dice_weight", 0.5),
             foreground_weight=train_cfg.get("foreground_weight", 0.3),
             background_weight=train_cfg.get("background_weight", 0.7),
+        )
+
+    if loss_type == "dice":
+        return DiceLoss(smooth=train_cfg.get("smooth", 1.0))
+
+    if loss_type == "focal_bce_dice":
+        return FocalBCEDiceLoss(
+            focal_weight=train_cfg.get("focal_weight", 0.5),
+            dice_weight=train_cfg.get("dice_weight", 0.5),
+            gamma=train_cfg.get("gamma", 2.0),
+            alpha_positive=train_cfg.get("alpha_positive", 0.25),
+        )
+
+    if loss_type == "tversky":
+        return TverskyLoss(
+            alpha_fp=train_cfg.get("alpha_fp", 0.7),
+            beta_fn=train_cfg.get("beta_fn", 0.3),
+            smooth=train_cfg.get("smooth", 1.0),
         )
 
     raise ValueError(f"Unsupported loss_type: {loss_type}")
@@ -171,11 +235,22 @@ def main() -> None:
         train_cfg["epochs"] = args.epochs
     if args.device is not None:
         train_cfg["device"] = args.device
+    if args.seed is not None:
+        train_cfg["seed"] = args.seed
+    if args.output_dir is not None:
+        train_cfg["output_dir"] = args.output_dir
 
     set_seed(train_cfg.get("seed", 42))
     device = get_device(train_cfg.get("device", "auto"))
 
     output_dir = Path(train_cfg["output_dir"])
+    if output_dir.exists() and any(output_dir.iterdir()):
+        if not args.overwrite:
+            raise RuntimeError(
+                f"Output directory is not empty: {output_dir}. "
+                "Use --overwrite or choose a different --output-dir."
+            )
+        shutil.rmtree(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     save_json(cfg, output_dir / "config.json")
 
@@ -194,9 +269,18 @@ def main() -> None:
     optimizer = build_optimizer(model, train_cfg)
     scheduler = build_scheduler(optimizer, train_cfg)
 
+    selection_cfg = metric_cfg.get("selection", {})
+    normal_aware_selection = bool(selection_cfg.get("enabled", False))
+    dice_tolerance = float(selection_cfg.get("dice_tolerance", 0.05))
+    thresholds = [float(value) for value in metric_cfg.get("threshold_sweep", [metric_cfg.get("threshold", 0.5)])]
+    min_fp_area_ratio = float(metric_cfg.get("min_fp_area_ratio", 0.001))
+    epoch_selection_rows: list[dict[str, float | int | str]] = []
+    checkpoint_dir = output_dir / "epoch_checkpoints"
+    threshold_history_path = output_dir / "val_threshold_metrics.csv"
+
     best_val_dice = -1.0
     best_epoch = 0
-    patience = train_cfg.get("early_stopping_patience", 0)
+    patience = 0 if normal_aware_selection else train_cfg.get("early_stopping_patience", 0)
     epochs_without_improvement = 0
     history_path = output_dir / "history.csv"
 
@@ -211,15 +295,29 @@ def main() -> None:
             threshold=metric_cfg.get("threshold", 0.5),
             min_fp_area_ratio=metric_cfg.get("min_fp_area_ratio", 0.001),
         )
-        val_metrics = run_epoch(
-            model,
-            val_loader,
-            criterion,
-            device,
-            optimizer=None,
-            threshold=metric_cfg.get("threshold", 0.5),
-            min_fp_area_ratio=metric_cfg.get("min_fp_area_ratio", 0.001),
-        )
+        if normal_aware_selection:
+            threshold_rows = run_validation_threshold_sweep(
+                model,
+                val_loader,
+                criterion,
+                device,
+                thresholds=thresholds,
+                min_fp_area_ratio=min_fp_area_ratio,
+            )
+            for threshold_row in threshold_rows:
+                append_history_row(threshold_history_path, {"epoch": epoch, **threshold_row})
+            val_metrics = select_normal_aware(threshold_rows, dice_tolerance=dice_tolerance)
+            epoch_selection_rows.append({"epoch": epoch, **val_metrics})
+        else:
+            val_metrics = run_epoch(
+                model,
+                val_loader,
+                criterion,
+                device,
+                optimizer=None,
+                threshold=metric_cfg.get("threshold", 0.5),
+                min_fp_area_ratio=min_fp_area_ratio,
+            )
         if scheduler is not None:
             scheduler.step()
 
@@ -231,22 +329,30 @@ def main() -> None:
         val_dice = val_metrics["tumor_dice"]
         improved = val_dice > best_val_dice
 
-        checkpoint = {
-            "epoch": epoch,
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "scheduler_state_dict": scheduler.state_dict() if scheduler is not None else None,
-            "config": cfg,
-            "val_metrics": val_metrics,
-        }
-        torch.save(checkpoint, output_dir / "last.pt")
+        if normal_aware_selection:
+            checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            torch.save(
+                {"epoch": epoch, "model_state_dict": model.state_dict(), "config": cfg, "val_metrics": val_metrics},
+                checkpoint_dir / f"epoch_{epoch:04d}.pt",
+            )
+        else:
+            checkpoint = {
+                "epoch": epoch,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "scheduler_state_dict": scheduler.state_dict() if scheduler is not None else None,
+                "config": cfg,
+                "val_metrics": val_metrics,
+            }
+            torch.save(checkpoint, output_dir / "last.pt")
 
         if improved:
             best_val_dice = val_dice
             best_epoch = epoch
             epochs_without_improvement = 0
-            torch.save(checkpoint, output_dir / "best.pt")
-            save_json({"best_epoch": best_epoch, "best_val_tumor_dice": best_val_dice}, output_dir / "best_summary.json")
+            if not normal_aware_selection:
+                torch.save(checkpoint, output_dir / "best.pt")
+                save_json({"best_epoch": best_epoch, "best_val_tumor_dice": best_val_dice}, output_dir / "best_summary.json")
         else:
             epochs_without_improvement += 1
 
@@ -262,6 +368,28 @@ def main() -> None:
         if patience and epochs_without_improvement >= patience:
             print(f"Early stopping at epoch {epoch}.")
             break
+
+    if normal_aware_selection:
+        selected = select_normal_aware(epoch_selection_rows, dice_tolerance=dice_tolerance)
+        selected_epoch = int(selected["epoch"])
+        selected_threshold = float(selected["threshold"])
+        selected_source = checkpoint_dir / f"epoch_{selected_epoch:04d}.pt"
+        best_path = output_dir / "best.pt"
+        shutil.copy2(selected_source, best_path)
+        for checkpoint_path in checkpoint_dir.glob("*.pt"):
+            checkpoint_path.unlink()
+        checkpoint_dir.rmdir()
+
+        summary = {
+            "selected_epoch": selected_epoch,
+            "selected_threshold": selected_threshold,
+            "selection_rule": selected["selection_rule"],
+            "selection_dice_tolerance": dice_tolerance,
+            "val_metrics": {key: value for key, value in selected.items() if key not in {"epoch", "threshold", "selection_rule", "selection_dice_tolerance", "selection_reference_best_tumor_dice"}},
+            "selection_reference_best_tumor_dice": selected["selection_reference_best_tumor_dice"],
+        }
+        save_json(summary, output_dir / "best_summary.json")
+        print(f"selected_epoch={selected_epoch} selected_threshold={selected_threshold:.2f}")
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@ if __package__ is None or __package__ == "":
 
 from src.data import BTXRDSegmentationDataset
 from src.models import UNet
-from src.training.losses import BCEDiceLoss
+from src.training.train_unet import build_criterion
 from src.training.utils import load_config
 
 
@@ -20,6 +20,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Smoke test the BTXRD model pipeline.")
     parser.add_argument("--config", default="configs/train_unet_baseline.yaml")
     parser.add_argument("--samples-per-split", type=int, default=8)
+    parser.add_argument("--all-ablation-losses", action="store_true", help="Smoke-test all six loss-ablation configs.")
     return parser.parse_args()
 
 
@@ -63,6 +64,7 @@ def check_forward_backward(
     tumor_only: bool,
     image_mean: tuple[float, float, float],
     image_std: tuple[float, float, float],
+    criterion: torch.nn.Module,
 ) -> None:
     dataset = BTXRDSegmentationDataset(
         csv_path=train_csv,
@@ -77,9 +79,8 @@ def check_forward_backward(
     batch = next(iter(loader))
 
     model = UNet(base_channels=8)
-    criterion = BCEDiceLoss()
     logits = model(batch["image"])
-    loss = criterion(logits, batch["mask"])
+    loss = criterion(logits, batch["mask"], tumor=batch["tumor"])
     loss.backward()
 
     assert logits.shape == batch["mask"].shape
@@ -88,33 +89,40 @@ def check_forward_backward(
 
 def main() -> None:
     args = parse_args()
-    cfg = load_config(args.config)
-    image_size = int(cfg["training"]["image_size"])
-    image_mean = tuple(cfg["training"].get("image_mean", (0.485, 0.456, 0.406)))
-    image_std = tuple(cfg["training"].get("image_std", (0.229, 0.224, 0.225)))
-    root_dir = cfg["data"].get("root_dir", ".")
-    tumor_only = cfg["data"].get("tumor_only", cfg["training"].get("tumor_only", False))
+    config_paths = [Path(args.config)]
+    if args.all_ablation_losses:
+        config_paths = sorted(Path("configs/loss_ablation").glob("*.yaml"))
 
-    for split in ["train", "val", "test"]:
-        check_dataset(
-            cfg["data"][f"{split}_csv"],
+    for config_path in config_paths:
+        cfg = load_config(config_path)
+        image_size = int(cfg["training"]["image_size"])
+        image_mean = tuple(cfg["training"].get("image_mean", (0.485, 0.456, 0.406)))
+        image_std = tuple(cfg["training"].get("image_std", (0.229, 0.224, 0.225)))
+        root_dir = cfg["data"].get("root_dir", ".")
+        tumor_only = cfg["data"].get("tumor_only", cfg["training"].get("tumor_only", False))
+
+        for split in ["train", "val", "test"]:
+            check_dataset(
+                cfg["data"][f"{split}_csv"],
+                root_dir,
+                image_size,
+                args.samples_per_split,
+                tumor_only,
+                image_mean,
+                image_std,
+            )
+
+        check_forward_backward(
+            cfg["data"]["train_csv"],
             root_dir,
             image_size,
-            args.samples_per_split,
-            tumor_only,
-            image_mean,
-            image_std,
+            batch_size=min(2, cfg["training"]["batch_size"]),
+            tumor_only=tumor_only,
+            image_mean=image_mean,
+            image_std=image_std,
+            criterion=build_criterion(cfg["training"]),
         )
-
-    check_forward_backward(
-        cfg["data"]["train_csv"],
-        root_dir,
-        image_size,
-        batch_size=min(2, cfg["training"]["batch_size"]),
-        tumor_only=tumor_only,
-        image_mean=image_mean,
-        image_std=image_std,
-    )
+        print(f"Smoke-tested {config_path}")
 
     print("BTXRD model pipeline smoke test passed.")
 
