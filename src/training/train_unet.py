@@ -277,6 +277,7 @@ def main() -> None:
     epoch_selection_rows: list[dict[str, float | int | str]] = []
     checkpoint_dir = output_dir / "epoch_checkpoints"
     threshold_history_path = output_dir / "val_threshold_metrics.csv"
+    retained_selection_checkpoints: dict[int, float] = {}
 
     best_val_dice = -1.0
     best_epoch = 0
@@ -329,12 +330,31 @@ def main() -> None:
         val_dice = val_metrics["tumor_dice"]
         improved = val_dice > best_val_dice
 
+        if improved:
+            best_val_dice = val_dice
+            best_epoch = epoch
+            epochs_without_improvement = 0
+        else:
+            epochs_without_improvement += 1
+
         if normal_aware_selection:
-            checkpoint_dir.mkdir(parents=True, exist_ok=True)
-            torch.save(
-                {"epoch": epoch, "model_state_dict": model.state_dict(), "config": cfg, "val_metrics": val_metrics},
-                checkpoint_dir / f"epoch_{epoch:04d}.pt",
-            )
+            # An epoch below the running Dice window cannot become eligible
+            # later because the best Dice only stays constant or increases.
+            # Retaining only potentially eligible checkpoints preserves the
+            # final normal-aware selection exactly while bounding disk usage.
+            retention_floor = best_val_dice - dice_tolerance
+            if val_dice >= retention_floor:
+                checkpoint_dir.mkdir(parents=True, exist_ok=True)
+                torch.save(
+                    {"epoch": epoch, "model_state_dict": model.state_dict(), "config": cfg, "val_metrics": val_metrics},
+                    checkpoint_dir / f"epoch_{epoch:04d}.pt",
+                )
+                retained_selection_checkpoints[epoch] = val_dice
+
+            for retained_epoch, retained_dice in list(retained_selection_checkpoints.items()):
+                if retained_dice < retention_floor:
+                    (checkpoint_dir / f"epoch_{retained_epoch:04d}.pt").unlink(missing_ok=True)
+                    del retained_selection_checkpoints[retained_epoch]
         else:
             checkpoint = {
                 "epoch": epoch,
@@ -345,16 +365,9 @@ def main() -> None:
                 "val_metrics": val_metrics,
             }
             torch.save(checkpoint, output_dir / "last.pt")
-
-        if improved:
-            best_val_dice = val_dice
-            best_epoch = epoch
-            epochs_without_improvement = 0
-            if not normal_aware_selection:
+            if improved:
                 torch.save(checkpoint, output_dir / "best.pt")
                 save_json({"best_epoch": best_epoch, "best_val_tumor_dice": best_val_dice}, output_dir / "best_summary.json")
-        else:
-            epochs_without_improvement += 1
 
         print(
             f"epoch={epoch} "
