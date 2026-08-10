@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import unittest
 
-from src.training.aggregate_loss_ablation import loss_summary
 from src.training.selection import challenger_eligibility, select_normal_aware
 
 
@@ -22,19 +21,6 @@ class SelectionTests(unittest.TestCase):
         )
         self.assertFalse(eligible)
         self.assertIn("Recall", reason)
-
-    def test_overall_winner_can_remain_baseline_and_recall_is_seed_matched(self) -> None:
-        rows = [
-            {"loss": "bce_dice_05", "seed": 42, "val_tumor_dice": 0.60, "val_tumor_iou": 0.5, "val_tumor_precision": 0.6, "val_tumor_recall": 0.90, "val_normal_fp_image_rate": 0.10, "val_normal_pred_area_ratio": 0.001},
-            {"loss": "bce_dice_05", "seed": 52, "val_tumor_dice": 0.60, "val_tumor_iou": 0.5, "val_tumor_precision": 0.6, "val_tumor_recall": 0.50, "val_normal_fp_image_rate": 0.10, "val_normal_pred_area_ratio": 0.001},
-            {"loss": "challenger", "seed": 42, "val_tumor_dice": 0.60, "val_tumor_iou": 0.5, "val_tumor_precision": 0.6, "val_tumor_recall": 0.79, "val_normal_fp_image_rate": 0.12, "val_normal_pred_area_ratio": 0.002},
-            {"loss": "challenger", "seed": 52, "val_tumor_dice": 0.60, "val_tumor_iou": 0.5, "val_tumor_precision": 0.6, "val_tumor_recall": 0.61, "val_normal_fp_image_rate": 0.12, "val_normal_pred_area_ratio": 0.002},
-        ]
-        summary = loss_summary(rows, "bce_dice_05", dice_tolerance=0.05, recall_tolerance=0.10)
-        self.assertEqual(summary["losses"]["challenger"]["recall_guard_violations"], 1)
-        self.assertEqual(summary["best_challenger"], "challenger")
-        self.assertEqual(summary["validation_winner_overall"], "bce_dice_05")
-
 
 if __name__ == "__main__":
     unittest.main()

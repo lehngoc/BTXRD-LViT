@@ -37,7 +37,7 @@ class UpBlock(nn.Module):
 
 
 class UNet(nn.Module):
-    """Compact UNet baseline for 224x224 BTXRD segmentation."""
+    """Compact UNet control architecture for BTXRD segmentation."""
 
     def __init__(
         self,
