@@ -16,7 +16,7 @@ if __package__ is None or __package__ == "":
 from src.data import BTXRDSegmentationDataset
 from src.models import UNet
 from src.training.losses import BCEDiceLoss, DiceLoss, FocalBCEDiceLoss, LegacyWeightedDiceBCELoss, TverskyLoss
-from src.training.metrics import SegmentationMetricAccumulator
+from src.training.metrics import NORMAL_FP_AREA_RATIO_THRESHOLD, SegmentationMetricAccumulator
 from src.training.selection import select_normal_aware
 from src.training.utils import append_history_row, get_device, load_config, save_json, set_seed
 
@@ -72,7 +72,7 @@ def run_epoch(
     optimizer: torch.optim.Optimizer | None = None,
     accumulation_steps: int = 1,
     threshold: float = 0.5,
-    min_fp_area_ratio: float = 0.001,
+    min_fp_area_ratio: float = NORMAL_FP_AREA_RATIO_THRESHOLD,
 ) -> dict[str, float]:
     train = optimizer is not None
     model.train(train)
@@ -273,7 +273,7 @@ def main() -> None:
     normal_aware_selection = bool(selection_cfg.get("enabled", False))
     dice_tolerance = float(selection_cfg.get("dice_tolerance", 0.05))
     thresholds = [float(value) for value in metric_cfg.get("threshold_sweep", [metric_cfg.get("threshold", 0.5)])]
-    min_fp_area_ratio = float(metric_cfg.get("min_fp_area_ratio", 0.001))
+    min_fp_area_ratio = float(metric_cfg.get("min_fp_area_ratio", NORMAL_FP_AREA_RATIO_THRESHOLD))
     epoch_selection_rows: list[dict[str, float | int | str]] = []
     checkpoint_dir = output_dir / "epoch_checkpoints"
     threshold_history_path = output_dir / "val_threshold_metrics.csv"
@@ -294,7 +294,7 @@ def main() -> None:
             optimizer=optimizer,
             accumulation_steps=train_cfg.get("accumulation_steps", 1),
             threshold=metric_cfg.get("threshold", 0.5),
-            min_fp_area_ratio=metric_cfg.get("min_fp_area_ratio", 0.001),
+            min_fp_area_ratio=metric_cfg.get("min_fp_area_ratio", NORMAL_FP_AREA_RATIO_THRESHOLD),
         )
         if normal_aware_selection:
             threshold_rows = run_validation_threshold_sweep(

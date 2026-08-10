@@ -5,11 +5,14 @@ from dataclasses import dataclass, field
 import torch
 
 
+NORMAL_FP_AREA_RATIO_THRESHOLD = 1e-4
+
+
 @dataclass
 class SegmentationMetricAccumulator:
     threshold: float = 0.5
     eps: float = 1e-7
-    min_fp_area_ratio: float = 0.001
+    min_fp_area_ratio: float = NORMAL_FP_AREA_RATIO_THRESHOLD
     groups: dict[str, list[dict[str, float]]] = field(
         default_factory=lambda: {"all": [], "tumor": [], "normal": []}
     )

@@ -1,0 +1,17 @@
+protocol:
+  id: P0_protocol_v1
+  seed: 42
+
+data:
+  canonical_split: configs/splits/btxrd_split_seed42.csv
+  export_manifest: data/exports/btxrd_preprocessed/all.csv
+  output_dir: data/exports/phase0_ssl
+  labeled_fraction: 0.5
+  stratify_by: diagnosis_group
+  strata: [normal, benign, malignant]
+
+evaluation:
+  normal_fp_area_ratio_threshold: 0.0001
+  normal_fp_comparison: ">"
+  val_test_inference: full_image_gt_independent
+  test_mode: final_locked

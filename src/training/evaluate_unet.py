@@ -15,6 +15,7 @@ if __package__ is None or __package__ == "":
 from src.data import BTXRDSegmentationDataset
 from src.models import UNet
 from src.training.metrics import SegmentationMetricAccumulator
+from src.protocol.locked_test import require_locked_test
 from src.training.utils import get_device, load_config, save_json
 
 
@@ -26,6 +27,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", default=None)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--threshold", type=float, default=None)
+    parser.add_argument("--locked-final", action="store_true")
+    parser.add_argument("--lock-artifact", default=None)
     return parser.parse_args()
 
 
@@ -57,11 +60,24 @@ def main() -> None:
     data_cfg = cfg["data"]
     model_cfg = cfg["model"]
     metric_cfg = cfg.get("metrics", {})
+    locked_artifact = None
+    if args.split == "test":
+        locked_artifact = require_locked_test(
+            locked_final=args.locked_final,
+            lock_artifact_path=args.lock_artifact,
+            checkpoint=args.checkpoint,
+            config=args.config,
+        )
+        if args.threshold is not None:
+            raise PermissionError("Test threshold is frozen in the locked-test artifact.")
     threshold, threshold_source = resolve_threshold(
         args.checkpoint,
         configured_threshold=metric_cfg.get("threshold", 0.5),
         manual_threshold=args.threshold,
     )
+    if locked_artifact is not None:
+        threshold = float(locked_artifact["selected_threshold"])
+        threshold_source = "locked-test artifact"
 
     device = get_device(args.device)
     dataset = BTXRDSegmentationDataset(
@@ -94,7 +110,7 @@ def main() -> None:
 
     metrics = SegmentationMetricAccumulator(
         threshold=threshold,
-        min_fp_area_ratio=metric_cfg.get("min_fp_area_ratio", 0.001),
+        min_fp_area_ratio=metric_cfg.get("min_fp_area_ratio", 1e-4),
     )
 
     for batch in tqdm(loader):

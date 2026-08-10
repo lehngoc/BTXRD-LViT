@@ -47,4 +47,4 @@ training:
 
 metrics:
   threshold: 0.5
-  min_fp_area_ratio: 0.001
+  min_fp_area_ratio: 0.0001
