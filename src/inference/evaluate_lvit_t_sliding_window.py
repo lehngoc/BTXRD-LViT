@@ -27,6 +27,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--threshold", type=float, default=None)
     parser.add_argument("--max-images", type=int, default=None)
     parser.add_argument("--save-pred-dir", default=None)
+    parser.add_argument("--save-probability-dir", default=None)
+    parser.add_argument("--save-overlap-stats-dir", default=None)
+    parser.add_argument("--save-entropy-dir", default=None)
+    parser.add_argument("--save-disagreement-dir", default=None)
     return parser.parse_args()
 
 
@@ -57,6 +61,10 @@ def main() -> None:
         merge=sw_cfg.get("merge", "average_probability"),
         max_images=args.max_images,
         save_pred_dir=args.save_pred_dir,
+        save_probability_dir=args.save_probability_dir,
+        save_overlap_stats_dir=args.save_overlap_stats_dir,
+        save_entropy_dir=args.save_entropy_dir,
+        save_disagreement_dir=args.save_disagreement_dir,
         text_column=train_cfg.get("text_column", "text_lvit_prompt"),
         image_mean=tuple(train_cfg.get("image_mean", (0.485, 0.456, 0.406))),
         image_std=tuple(train_cfg.get("image_std", (0.229, 0.224, 0.225))),

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import time
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,16 @@ GROUP_METRIC_NAMES = [
     "pred_area_ratio",
     "target_area_ratio",
 ]
+
+
+@dataclass(frozen=True)
+class SlidingWindowStats:
+    probability: np.ndarray
+    count: np.ndarray
+    sum_probability: np.ndarray
+    sum_probability_squared: np.ndarray
+    variance: np.ndarray
+    window_count: int
 
 
 def resolve_path(path_value: str | Path, root_dir: str | Path) -> Path:
@@ -87,7 +98,7 @@ def pad_image_to_patch(image: np.ndarray, patch_size: int) -> tuple[np.ndarray, 
 
 
 @torch.no_grad()
-def predict_sliding_window(
+def predict_sliding_window_stats(
     model: torch.nn.Module,
     image: np.ndarray,
     device: torch.device,
@@ -118,6 +129,7 @@ def predict_sliding_window(
     windows = [(x, y) for y in y_starts for x in x_starts]
 
     prob_sum = np.zeros((height, width), dtype=np.float32)
+    prob_sq_sum = np.zeros((height, width), dtype=np.float32)
     count_sum = np.zeros((height, width), dtype=np.float32)
     text_features: torch.Tensor | None = None
 
@@ -146,10 +158,55 @@ def predict_sliding_window(
 
         for prob, (x, y) in zip(probs, batch_windows):
             prob_sum[y : y + patch_size, x : x + patch_size] += prob
+            prob_sq_sum[y : y + patch_size, x : x + patch_size] += prob * prob
             count_sum[y : y + patch_size, x : x + patch_size] += 1.0
 
     merged = prob_sum / np.maximum(count_sum, 1e-6)
-    return merged[:original_h, :original_w], len(windows)
+    mean_sq = prob_sq_sum / np.maximum(count_sum, 1e-6)
+    variance = np.maximum(mean_sq - merged * merged, 0.0)
+    return SlidingWindowStats(
+        probability=merged[:original_h, :original_w],
+        count=count_sum[:original_h, :original_w],
+        sum_probability=prob_sum[:original_h, :original_w],
+        sum_probability_squared=prob_sq_sum[:original_h, :original_w],
+        variance=variance[:original_h, :original_w],
+        window_count=len(windows),
+    )
+
+
+@torch.no_grad()
+def predict_sliding_window(
+    model: torch.nn.Module,
+    image: np.ndarray,
+    device: torch.device,
+    patch_size: int = 384,
+    stride: int = 192,
+    batch_size: int = 4,
+    merge: str = AVERAGE_PROBABILITY,
+    text_prompt: str | None = None,
+    image_mean: tuple[float, float, float] = IMAGENET_MEAN,
+    image_std: tuple[float, float, float] = IMAGENET_STD,
+    mixed_precision: bool = False,
+) -> tuple[np.ndarray, int]:
+    stats = predict_sliding_window_stats(
+        model=model,
+        image=image,
+        device=device,
+        patch_size=patch_size,
+        stride=stride,
+        batch_size=batch_size,
+        merge=merge,
+        text_prompt=text_prompt,
+        image_mean=image_mean,
+        image_std=image_std,
+        mixed_precision=mixed_precision,
+    )
+    return stats.probability, stats.window_count
+
+
+def predictive_entropy(probability: np.ndarray, eps: float = 1e-7) -> np.ndarray:
+    p = np.clip(probability.astype(np.float32), eps, 1.0 - eps)
+    return -(p * np.log(p) + (1.0 - p) * np.log(1.0 - p))
 
 
 def compute_sample_metrics(
@@ -214,6 +271,10 @@ def evaluate_full_images(
     merge: str = AVERAGE_PROBABILITY,
     max_images: int | None = None,
     save_pred_dir: str | Path | None = None,
+    save_probability_dir: str | Path | None = None,
+    save_overlap_stats_dir: str | Path | None = None,
+    save_entropy_dir: str | Path | None = None,
+    save_disagreement_dir: str | Path | None = None,
     text_column: str | None = None,
     image_mean: tuple[float, float, float] = IMAGENET_MEAN,
     image_std: tuple[float, float, float] = IMAGENET_STD,
@@ -240,6 +301,18 @@ def evaluate_full_images(
     pred_dir = Path(save_pred_dir) if save_pred_dir else None
     if pred_dir is not None:
         pred_dir.mkdir(parents=True, exist_ok=True)
+    probability_dir = Path(save_probability_dir) if save_probability_dir else None
+    if probability_dir is not None:
+        probability_dir.mkdir(parents=True, exist_ok=True)
+    overlap_stats_dir = Path(save_overlap_stats_dir) if save_overlap_stats_dir else None
+    if overlap_stats_dir is not None:
+        overlap_stats_dir.mkdir(parents=True, exist_ok=True)
+    entropy_dir = Path(save_entropy_dir) if save_entropy_dir else None
+    if entropy_dir is not None:
+        entropy_dir.mkdir(parents=True, exist_ok=True)
+    disagreement_dir = Path(save_disagreement_dir) if save_disagreement_dir else None
+    if disagreement_dir is not None:
+        disagreement_dir.mkdir(parents=True, exist_ok=True)
 
     rows: list[dict[str, Any]] = []
     start_time = time.perf_counter()
@@ -261,7 +334,7 @@ def evaluate_full_images(
             text_value = getattr(item, text_column)
             text_prompt = "" if pd.isna(text_value) else str(text_value)
 
-        probability, window_count = predict_sliding_window(
+        stats = predict_sliding_window_stats(
             model=model,
             image=image,
             device=device,
@@ -274,6 +347,7 @@ def evaluate_full_images(
             image_std=image_std,
             mixed_precision=mixed_precision,
         )
+        probability = stats.probability
         is_tumor = int(item.tumor) == 1
         metrics = compute_sample_metrics(
             probability=probability,
@@ -286,7 +360,7 @@ def evaluate_full_images(
             {
                 "image_id": str(item.image_id),
                 "is_tumor": is_tumor,
-                "window_count": int(window_count),
+                "window_count": int(stats.window_count),
                 "image_h": int(image.shape[0]),
                 "image_w": int(image.shape[1]),
             }
@@ -296,6 +370,21 @@ def evaluate_full_images(
         if pred_dir is not None:
             pred_mask = (probability >= threshold).astype(np.uint8) * 255
             Image.fromarray(pred_mask).save(pred_dir / f"{Path(str(item.image_id)).stem}_pred.png")
+        image_stem = Path(str(item.image_id)).stem
+        if probability_dir is not None:
+            np.save(probability_dir / f"{image_stem}.npy", probability.astype(np.float32))
+        if overlap_stats_dir is not None:
+            np.savez_compressed(
+                overlap_stats_dir / f"{image_stem}.npz",
+                count=stats.count.astype(np.float32),
+                sum_probability=stats.sum_probability.astype(np.float32),
+                sum_probability_squared=stats.sum_probability_squared.astype(np.float32),
+                variance=stats.variance.astype(np.float32),
+            )
+        if entropy_dir is not None:
+            np.save(entropy_dir / f"{image_stem}.npy", predictive_entropy(probability).astype(np.float32))
+        if disagreement_dir is not None:
+            np.save(disagreement_dir / f"{image_stem}.npy", stats.variance.astype(np.float32))
 
     elapsed = time.perf_counter() - start_time
     output = aggregate_group_metrics(rows)
