@@ -246,6 +246,18 @@ experiments/**
 !experiments/
 !experiments/.gitkeep
 
+# Local/Kaggle artifact bundles copied into repo root
+/E2_unet_patch384_preprocessed_pos060/
+/E4_lvit_t_patch384_text_artifacts/
+/E2_unet_patch384_preprocessed_pos060.zip
+/E4_lvit_t_patch384_text_artifacts.zip
+/w1_b_eval/
+/w1_b_eval_outputs.zip
+/w1_*_validation_probability_maps/
+/w1_*_entropy_prototype/
+/w1_*_overlap_disagreement_prototype/
+/w1_*_overlap_disagreement_maps/
+
 # Model checkpoints
 *.pth
 *.pt
